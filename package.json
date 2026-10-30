@@ -1,0 +1,16 @@
+{
+  "name": "trackmyshi",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Instagram DM webhook logger (step 1 of the reel-to-calendar bot)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  }
+}
