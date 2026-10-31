@@ -5,7 +5,7 @@ const net = require("net");
 const path = require("path");
 const { spawn } = require("child_process");
 const { Pool } = require("pg");
-const { testDatabaseUrl, SKIP_DB, sign } = require("./helpers");
+const { testDatabaseUrl, SKIP_DB, sign, PATH_WITH_STUBS } = require("./helpers");
 const fixture = require("./fixtures/reel-share.json");
 
 const SECRET = "test-secret";
@@ -54,7 +54,8 @@ test.describe("server", { skip: SKIP_DB }, () => {
     base = `http://localhost:${port}`;
     server = spawn(process.execPath, ["index.js"], {
       cwd: path.join(__dirname, ".."),
-      env: { PATH: process.env.PATH, USER: process.env.USER, HOME: process.env.HOME, PORT: String(port), DATABASE_URL: testDatabaseUrl(), APP_SECRET: SECRET, VERIFY_TOKEN: "vt" },
+      // The stub yt-dlp fails every fetch, so shares go caption-only and no vendor is called.
+      env: { PATH: PATH_WITH_STUBS, USER: process.env.USER, HOME: process.env.HOME, PORT: String(port), DATABASE_URL: testDatabaseUrl(), APP_SECRET: SECRET, VERIFY_TOKEN: "vt" },
     });
     server.stdout.on("data", (d) => (output += d));
     server.stderr.on("data", (d) => (output += d));
@@ -89,7 +90,6 @@ test.describe("server", { skip: SKIP_DB }, () => {
     assert.equal((await post(body)).status, 200);
     await waitFor(async () => (await countRows()) === before + 1, "share row");
     const { rows } = await pool.query("SELECT * FROM shares WHERE mid = $1", [MID]);
-    assert.equal(rows[0].status, "received");
     assert.equal(rows[0].sender_id, "1000000000000001");
     assert.equal(rows[0].reel_url, "https://www.instagram.com/reel/De2uJ0aP1zu/");
     assert.match(rows[0].caption, /#janestreet/);
@@ -98,6 +98,16 @@ test.describe("server", { skip: SKIP_DB }, () => {
     assert.equal((await post(body)).status, 200);
     await waitForLog(`share mid=${MID} duplicate delivery ignored`);
     assert.equal(await countRows(), before + 1);
+  });
+
+  test("a share whose video can't be fetched still gets a caption-only bundle", async () => {
+    await waitForLog(`share mid=${MID} sender=1000000000000001 status=fetched reason=fetch_failed`);
+    const { rows } = await pool.query("SELECT * FROM shares WHERE mid = $1", [MID]);
+    assert.equal(rows[0].status, "fetched");
+    assert.equal(rows[0].failure_reason, "fetch_failed");
+    assert.match(rows[0].bundle.caption, /#janestreet/);
+    assert.equal(rows[0].bundle.transcript, null);
+    assert.ok(rows[0].fetched_at instanceof Date);
   });
 
   test("bad signatures, non-JSON bodies, echoes and texts get 200 but create no rows", async () => {

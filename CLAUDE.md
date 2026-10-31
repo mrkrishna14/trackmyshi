@@ -12,7 +12,7 @@ The build goes one module at a time, and each module builds only what it needs. 
 
 0. ✅ yt-dlp works from Railway, logged out (Dockerfile).
 1. ✅ Ingest hardening: signature check, `shares` table, dedupe on `message.mid`, in-process queue, re-queue on boot.
-2. Video to text: yt-dlp fetch, Whisper transcript, Claude-vision OCR of sampled frames, combined with the caption.
+2. Video to text (built, awaiting the Railway test): yt-dlp fetch, Whisper transcript, Claude-vision OCR of 8 evenly spaced frames, saved with the caption as `shares.bundle`.
 3. Extraction: one Claude call returning strict JSON, validated in code before use.
 4. Calendar write: hardcoded to the owner's calendar until module 6.
 5. Reply and undo via the Send API.
@@ -36,6 +36,7 @@ The build goes one module at a time, and each module builds only what it needs. 
 - `npm start` runs the server. It needs `DATABASE_URL` and `APP_SECRET`, plus `VERIFY_TOKEN` for the handshake. Without `APP_SECRET`, every POST is dropped.
 - `npm test` runs the pure unit tests.
 - `TEST_DATABASE_URL=postgres://localhost/due_test npm test` also runs the DB and server integration tests. Those truncate and drop tables, so `test/helpers.js` refuses any non-localhost URL. Local Postgres is Homebrew `postgresql@17`.
+- Tests never touch the network: `test/bin/yt-dlp` is a stub put first on `PATH` (`STUB_YTDLP=ok|private`), Whisper is tested with a fake global `fetch`, and `ocr`/`buildBundle` take their client and dependencies as arguments. The media tests run the real ffmpeg on a generated clip.
 - Run a single file with `node --test test/webhook.test.js`, or a single test with `node --test --test-name-pattern="dedupes" test/db.test.js`.
 
 ## Architecture
@@ -46,6 +47,8 @@ The build goes one module at a time, and each module builds only what it needs. 
 - **The table is the source of truth.** `src/queue.js` is in-memory, with concurrency 2. On boot, `requeueInProgress` re-queues shares that are partway through the pipeline and less than 24 hours old; the Send API only allows replies within 24h.
 - **Schema:** `src/db.js` applies `schema.sql` on every boot, so every statement there must be idempotent. Add columns with `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, and never edit `shares` destructively.
 - **Logging:** each status change goes through `db.setStatus`, which logs `share mid=… sender=… status=…`. Logs and the `shares` table are the debugging surface. Don't log full webhook bodies, because they contain student captions.
+- **Stages:** `processShare` reads the row and runs the stage for its current status, so a re-queued share resumes where it stopped. The fetch stage (`buildBundle` in `src/pipeline.js`) works in a temp dir that's always deleted. A failed step leaves its part of the bundle `null` and adds a reason, and the share still moves on: a failed fetch still gives a caption-only bundle. `failure_reason` then holds the comma-joined reasons even though the status is `fetched`. Reasons: `reel_private_or_deleted`, `fetch_login_required` (Instagram says this for both private reels and blocked requests), `fetch_failed`, `transcribe_failed`, `ocr_failed`. An unexpected throw marks the share `failed` with `internal_error`.
+- **Vendors:** `src/transcribe.js` is the only OpenAI code (`whisper-1`, plain `fetch`). `src/ocr.js` is the only Anthropic code so far (`claude-sonnet-5-5`, structured JSON output, low effort, server-side refusal fallback). Each validates the response and throws rather than guessing.
 - **Real reel payload:** `attachments[{type:"ig_reel", payload:{url, title, reel_video_id}}]`. `url` is the public reel *page*, not a video file. `title` is the caption. yt-dlp returns the creator's handle in `channel`; `uploader` is empty.
 
 ## Deployment (Railway)

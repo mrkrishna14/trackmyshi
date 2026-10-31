@@ -45,6 +45,16 @@ test.describe("db", { skip: SKIP_DB }, () => {
     assert.equal(row.failure_reason, "fetch_failed");
   });
 
+  test("setStatus saves the stage result in the same update", async () => {
+    await db.insertShare(share);
+    const bundle = { caption: "cap", transcript: null, ocr: [{ t: 1.5, text: "Nov 15" }] };
+    await db.setStatus("m1", "fetched", "transcribe_failed", { bundle });
+    const row = await db.getShare("m1");
+    assert.equal(row.status, "fetched");
+    assert.equal(row.failure_reason, "transcribe_failed");
+    assert.deepEqual(row.bundle, bundle);
+  });
+
   test("inProgressMids returns unfinished shares from the last 24h only", async () => {
     await db.insertShare({ ...share, mid: "fresh" });
     await db.insertShare({ ...share, mid: "midway" });

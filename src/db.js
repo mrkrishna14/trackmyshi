@@ -34,12 +34,21 @@ async function insertShare({ mid, senderId, reelUrl, caption }) {
   return rowCount === 1;
 }
 
-async function setStatus(mid, status, failureReason = null) {
-  const column = STAGE_COLUMNS[status];
+// Stage results that are saved together with the status change that produced them.
+const RESULT_COLUMNS = ["bundle"];
+
+async function setStatus(mid, status, failureReason = null, results = {}) {
+  const sets = ["status = $2", "failure_reason = $3"];
+  const values = [mid, status, failureReason];
+  if (STAGE_COLUMNS[status]) sets.push(`${STAGE_COLUMNS[status]} = now()`);
+  for (const column of RESULT_COLUMNS) {
+    if (!(column in results)) continue;
+    values.push(JSON.stringify(results[column]));
+    sets.push(`${column} = $${values.length}`);
+  }
   const { rows } = await pool.query(
-    `UPDATE shares SET status = $2, failure_reason = $3${column ? `, ${column} = now()` : ""}
-     WHERE mid = $1 RETURNING sender_id`,
-    [mid, status, failureReason]
+    `UPDATE shares SET ${sets.join(", ")} WHERE mid = $1 RETURNING sender_id`,
+    values
   );
   if (rows[0]) logShare(mid, rows[0].sender_id, status, failureReason);
 }

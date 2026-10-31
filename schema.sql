@@ -15,3 +15,6 @@ CREATE TABLE IF NOT EXISTS shares (
   calendared_at timestamptz,
   replied_at timestamptz
 );
+
+-- Module 2: caption + transcript + on-screen text, the input to extraction.
+ALTER TABLE shares ADD COLUMN IF NOT EXISTS bundle jsonb;

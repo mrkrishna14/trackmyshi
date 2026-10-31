@@ -1,0 +1,24 @@
+#!/bin/sh
+# Stand-in for yt-dlp so tests never touch the network. STUB_YTDLP picks the behaviour:
+#   ok       copy $STUB_VIDEO to the -o path and write an info.json
+#   private  fail the way yt-dlp does for a private or deleted reel
+#   (unset)  fail with a generic error
+out=""
+while [ $# -gt 0 ]; do
+  [ "$1" = "-o" ] && out="$2"
+  shift
+done
+case "$STUB_YTDLP" in
+  ok)
+    cp "$STUB_VIDEO" "$(echo "$out" | sed 's/%(ext)s/mp4/')"
+    echo '{"channel":"jakemok.io","uploader":"","upload_date":"20261023"}' > "$(echo "$out" | sed 's/%(ext)s/info.json/')"
+    ;;
+  private)
+    echo "ERROR: [Instagram] De2uJ0aP1zu: This content isn't available" >&2
+    exit 1
+    ;;
+  *)
+    echo "ERROR: test stub: yt-dlp is disabled in tests" >&2
+    exit 1
+    ;;
+esac
