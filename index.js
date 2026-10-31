@@ -1,4 +1,18 @@
 const express = require("express");
+const db = require("./src/db");
+const { verifySignature, parseEvents } = require("./src/webhook");
+const { receiveReel, requeueInProgress } = require("./src/pipeline");
+
+process.on("unhandledRejection", (err) => console.log("unhandled rejection:", err?.message || err));
+
+if (!process.env.APP_SECRET) console.log("APP_SECRET is not set: every webhook POST will be dropped");
+
+// Webhooks that arrive before the schema is applied wait on this.
+const ready = db.init().then(requeueInProgress);
+ready.catch((err) => {
+  console.log("database init failed:", err.message);
+  process.exit(1);
+});
 
 const app = express();
 
@@ -21,54 +35,36 @@ app.get("/webhook", (req, res) => {
   return res.sendStatus(403);
 });
 
-// Read the body as raw text instead of express.json(), so a malformed or
-// non-JSON body still gets a 200 and gets logged rather than rejected with 400.
-app.post("/webhook", express.text({ type: () => true, limit: "1mb" }), (req, res) => {
+// Always 200 first so Meta never retries or disables the webhook; all work happens after.
+// The body is read as raw bytes because the signature covers the exact bytes Meta sent.
+app.post("/webhook", express.raw({ type: () => true, limit: "1mb" }), (req, res) => {
   res.sendStatus(200);
 
-  const raw = typeof req.body === "string" ? req.body : "";
-  let body;
-  try {
-    body = JSON.parse(raw);
-  } catch {
-    console.log(`Webhook POST with non-JSON body:\n${raw}`);
+  const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  if (!verifySignature(raw, req.get("x-hub-signature-256"), process.env.APP_SECRET)) {
+    console.log("webhook dropped: invalid or missing signature");
     return;
   }
 
-  console.log(`Webhook POST body:\n${JSON.stringify(body, null, 2)}`);
-
+  let body;
   try {
-    logSummaries(body);
-  } catch (err) {
-    console.log("Could not summarize webhook body:", err.message);
+    body = JSON.parse(raw.toString("utf8"));
+  } catch {
+    console.log("webhook dropped: body is not JSON");
+    return;
   }
-});
 
-// Instagram delivers messages as entry[].messaging[]; some API versions use
-// entry[].changes[] with field "messages" instead. Check both.
-function logSummaries(body) {
-  for (const entry of body.entry || []) {
-    const events = [
-      ...(entry.messaging || []),
-      ...(entry.changes || []).filter((c) => c.field === "messages").map((c) => c.value),
-    ];
-
-    for (const event of events) {
-      const senderId = event?.sender?.id;
-      const attachments = event?.message?.attachments || [];
-      const types = attachments.map((a) => a?.type).filter(Boolean);
-      const urls = attachments.map((a) => a?.payload?.url).filter(Boolean);
-      const text = event?.message?.text;
-
-      console.log(
-        `Message summary: sender=${senderId ?? "?"}` +
-          ` attachment_types=${types.length ? types.join(",") : "none"}` +
-          ` urls=${urls.length ? urls.join(" ") : "none"}` +
-          (text ? ` text=${JSON.stringify(text)}` : "")
-      );
+  for (const event of parseEvents(body)) {
+    if (event.kind === "reel") {
+      ready
+        .then(() => receiveReel(event))
+        .catch((err) => console.log(`share mid=${event.mid} could not be recorded: ${err.message}`));
+    } else {
+      // Text messages (undo, help) are routed in module 5.
+      console.log(`webhook ignored kind=${event.kind} mid=${event.mid}`);
     }
   }
-}
+});
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
