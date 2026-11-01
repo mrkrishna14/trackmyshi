@@ -80,6 +80,9 @@ async function runExtraction(share, deps = { extract, verifyExtraction, today: t
     const date = item.deadline ? `${item.deadline.date}${item.deadline.time ? ` ${item.deadline.time} ${item.deadline.timezone}` : ""}` : "none";
     const link = item.link ? `${item.link.source} ${item.link.url}` : "none";
     log(mid, `item ${i} ${item.company} / ${item.program}: date=${date} (${item.date_status}${item.note ? `: ${item.note}` : ""}) link=${link}`);
+    // The evidence behind the date, so every calendared date can be audited from the logs.
+    const c = item.claimed;
+    log(mid, `item ${i} evidence: official=${c.official_url} quote=${JSON.stringify(c.official_deadline_quote)} creator(${c.creator_deadline_source})=${JSON.stringify(c.creator_deadline_quote)}`);
   }
   return { extraction };
 }
