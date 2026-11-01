@@ -101,10 +101,11 @@ test.describe("server", { skip: SKIP_DB }, () => {
   });
 
   test("a share whose video can't be fetched still gets a caption-only bundle", async () => {
+    // With no ANTHROPIC_API_KEY in the test env, extraction then fails and keeps both reasons.
     await waitForLog(`share mid=${MID} sender=1000000000000001 status=fetched reason=fetch_failed`);
+    await waitForLog(`share mid=${MID} sender=1000000000000001 status=failed reason=fetch_failed,extraction_failed`);
     const { rows } = await pool.query("SELECT * FROM shares WHERE mid = $1", [MID]);
-    assert.equal(rows[0].status, "fetched");
-    assert.equal(rows[0].failure_reason, "fetch_failed");
+    assert.equal(rows[0].failure_reason, "fetch_failed,extraction_failed");
     assert.match(rows[0].bundle.caption, /#janestreet/);
     assert.equal(rows[0].bundle.transcript, null);
     assert.ok(rows[0].fetched_at instanceof Date);

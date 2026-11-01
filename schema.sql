@@ -18,3 +18,6 @@ CREATE TABLE IF NOT EXISTS shares (
 
 -- Module 2: caption + transcript + on-screen text, the input to extraction.
 ALTER TABLE shares ADD COLUMN IF NOT EXISTS bundle jsonb;
+
+-- Module 3: the verified opportunities (deadline, link, sources) found for the reel.
+ALTER TABLE shares ADD COLUMN IF NOT EXISTS extraction jsonb;

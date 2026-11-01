@@ -7,6 +7,8 @@ const { fetchReel } = require("./fetchReel");
 const media = require("./media");
 const { transcribe } = require("./transcribe");
 const { ocr } = require("./ocr");
+const { extract } = require("./extract");
+const { verifyExtraction } = require("./verify");
 
 async function receiveReel(reel) {
   if (!(await db.insertShare(reel))) {
@@ -17,13 +19,14 @@ async function receiveReel(reel) {
 }
 
 // Each stage reads the row, does its work and saves the next status, so a share re-queued after
-// a restart resumes at the stage it reached. Extract -> calendar -> reply arrive in modules 3-5.
+// a restart resumes at the stage it reached. Calendar -> reply arrive in modules 4-5.
 async function processShare(mid) {
-  const share = await db.getShare(mid);
+  let share = await db.getShare(mid);
   if (!share) return;
   console.log(`share mid=${mid} picked up status=${share.status}`);
   try {
-    if (share.status === "received") await fetchStage(share);
+    if (share.status === "received") share = await fetchStage(share);
+    if (share.status === "fetched") share = await extractStage(share);
   } catch (err) {
     console.log(`share mid=${mid} stage threw: ${err.stack || err.message}`);
     await db.setStatus(mid, "failed", "internal_error");
@@ -38,6 +41,47 @@ async function fetchStage(share) {
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
+  return db.getShare(share.mid);
+}
+
+async function extractStage(share) {
+  // Earlier problems (e.g. a failed fetch) stay on the row so the reply can mention them.
+  const problems = share.failure_reason ? share.failure_reason.split(",") : [];
+  const { extraction, reason } = await runExtraction(share);
+  if (reason) await db.setStatus(share.mid, "failed", [...problems, reason].join(","));
+  else await db.setStatus(share.mid, "extracted", problems.join(",") || null, { extraction });
+  return db.getShare(share.mid);
+}
+
+// "Today" in the westernmost US timezone, so a deadline later today still counts as upcoming.
+const todayIso = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date());
+
+// Runs the agent, then the code checks. Returns { extraction } or { reason } for a failure.
+// `deps` is a parameter so tests can replace the vendor and the checks.
+async function runExtraction(share, deps = { extract, verifyExtraction, today: todayIso() }) {
+  const { mid, bundle } = share;
+  const today = deps.today;
+  // Years missing from a quote are read relative to when the reel was posted.
+  const reference = bundle.uploadDate || share.received_at.toISOString().slice(0, 10);
+  const start = Date.now();
+  let result;
+  try {
+    result = await deps.extract(bundle, { today });
+  } catch (err) {
+    log(mid, `extraction failed in ${seconds(start)}: ${err.message}`);
+    return { reason: err.reason || "extraction_failed" };
+  }
+  const { input_tokens, output_tokens, web_searches, requests } = result.usage;
+  log(mid, `extraction ran in ${seconds(start)}: ${requests} request(s), ${web_searches} search(es), in=${input_tokens} out=${output_tokens} tokens`);
+
+  const extraction = await deps.verifyExtraction(result, bundle, { today, reference });
+  if (extraction.items.length === 0) log(mid, `no opportunity found: ${extraction.none_reason}`);
+  for (const [i, item] of extraction.items.entries()) {
+    const date = item.deadline ? `${item.deadline.date}${item.deadline.time ? ` ${item.deadline.time} ${item.deadline.timezone}` : ""}` : "none";
+    const link = item.link ? `${item.link.source} ${item.link.url}` : "none";
+    log(mid, `item ${i} ${item.company} / ${item.program}: date=${date} (${item.date_status}${item.note ? `: ${item.note}` : ""}) link=${link}`);
+  }
+  return { extraction };
 }
 
 const log = (mid, message) => console.log(`share mid=${mid} ${message}`);
@@ -109,4 +153,4 @@ async function requeueInProgress() {
   console.log(`requeued ${mids.length} in-progress share(s)`);
 }
 
-module.exports = { receiveReel, requeueInProgress, buildBundle };
+module.exports = { receiveReel, requeueInProgress, buildBundle, runExtraction };

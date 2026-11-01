@@ -85,3 +85,43 @@ test("a silent video gets an empty transcript without calling Whisper", async ()
   assert.deepEqual(problems, []);
   assert.deepEqual(calls, ["ocr"]);
 });
+
+const { runExtraction } = require("../src/pipeline");
+const { ExtractionError } = require("../src/extract");
+
+test.describe("runExtraction", () => {
+  const fetchedShare = { mid: "m2", bundle: { caption: "cap", uploadDate: "2026-10-23" }, received_at: new Date("2026-10-30T12:00:00Z") };
+  const usage = { input_tokens: 1, output_tokens: 1, web_searches: 1, requests: 1 };
+
+  test("passes today and the reel's post date to the checks", async () => {
+    let seen;
+    const { extraction } = await runExtraction(fetchedShare, {
+      today: "2026-11-01",
+      extract: async () => ({ items: [], noneReason: "no opportunity", usage }),
+      verifyExtraction: async (result, bundle, ctx) => ((seen = ctx), { items: [], none_reason: result.noneReason, usage }),
+    });
+    assert.deepEqual(seen, { today: "2026-11-01", reference: "2026-10-23" });
+    assert.equal(extraction.none_reason, "no opportunity");
+  });
+
+  test("falls back to the received date when the post date is unknown", async () => {
+    let seen;
+    await runExtraction({ ...fetchedShare, bundle: { caption: "cap", uploadDate: null } }, {
+      today: "2026-11-01",
+      extract: async () => ({ items: [], noneReason: null, usage }),
+      verifyExtraction: async (r, b, ctx) => ((seen = ctx), { items: [], none_reason: null, usage }),
+    });
+    assert.equal(seen.reference, "2026-10-30");
+  });
+
+  test("an agent failure becomes its reason, without running the checks", async () => {
+    let checked = false;
+    const result = await runExtraction(fetchedShare, {
+      today: "2026-11-01",
+      extract: async () => { throw new ExtractionError("extraction_invalid", "no result"); },
+      verifyExtraction: async () => ((checked = true), {}),
+    });
+    assert.deepEqual(result, { reason: "extraction_invalid" });
+    assert.equal(checked, false);
+  });
+});

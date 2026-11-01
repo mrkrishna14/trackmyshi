@@ -13,7 +13,7 @@ The build goes one module at a time, and each module builds only what it needs. 
 0. ✅ yt-dlp works from Railway, logged out (Dockerfile).
 1. ✅ Ingest hardening: signature check, `shares` table, dedupe on `message.mid`, in-process queue, re-queue on boot.
 2. Video to text (built, awaiting the Railway test): yt-dlp fetch, Whisper transcript, Claude-vision OCR of 8 evenly spaced frames, saved with the caption as `shares.bundle`.
-3. Extraction: one Claude call returning strict JSON, validated in code before use.
+3. Extraction (built, awaiting the Railway test): a Claude agent with web search/fetch finds the official application page and deadline; `src/verify.js` checks every quote, date and link in code.
 4. Calendar write: hardcoded to the owner's calendar until module 6.
 5. Reply and undo via the Send API.
 6. Google linking: `users` table, signed link codes, re-consent when a token is revoked.
@@ -22,8 +22,8 @@ The build goes one module at a time, and each module builds only what it needs. 
 
 ## Rules that shape the code
 
-- **Wrong dates are the one unforgivable error.** A date is calendared only when the model's quoted evidence actually appears in the source text and the date is explicit and in the future. Otherwise the DM says the date couldn't be confirmed.
-- **Application links come from a source ladder:** a URL in the caption, then in OCR text, then an unambiguous spoken URL, then "link in @creator's bio" as the last resort. Never fabricate a URL, and never use one whose source can't be named in the logs.
+- **Wrong dates are the one unforgivable error.** A date is calendared only when a quote that really appears in its source (the fetched official page, or the reel's caption/transcript/OCR) states that exact month and day, the year matches or is inferable from the post date, and the date is in the future. **The official page wins** over the creator. A yearless official date that disagrees with the creator, or an official date already past while the creator's is ahead, is a `conflict`, and nothing is calendared. Otherwise the DM says the date couldn't be confirmed.
+- **Application links:** the agent searches for the official application page. A link is kept only if it appeared in the agent's search/fetch results or in the reel text, and the page still exists. 403/429 count as existing, since job sites block bots; 404/410 don't. After that come URLs in the caption or OCR text. Never fabricate a URL, and never use one whose source (`web`, `caption`, `ocr`, `transcript`) can't be named in the logs.
 - `POST /webhook` responds 200 before doing anything. All work runs off the queue.
 - Every failure path ends in an honest DM (from module 5 on) and a `failure_reason` on the share row. A bad reel never crashes the server.
 - Use only the Meta permissions `instagram_basic` and `instagram_manage_messages`. If a feature seems to need another permission, stop and ask; don't add it.
@@ -48,7 +48,8 @@ The build goes one module at a time, and each module builds only what it needs. 
 - **Schema:** `src/db.js` applies `schema.sql` on every boot, so every statement there must be idempotent. Add columns with `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, and never edit `shares` destructively.
 - **Logging:** each status change goes through `db.setStatus`, which logs `share mid=… sender=… status=…`. Logs and the `shares` table are the debugging surface. Don't log full webhook bodies, because they contain student captions.
 - **Stages:** `processShare` reads the row and runs the stage for its current status, so a re-queued share resumes where it stopped. The fetch stage (`buildBundle` in `src/pipeline.js`) works in a temp dir that's always deleted. A failed step leaves its part of the bundle `null` and adds a reason, and the share still moves on: a failed fetch still gives a caption-only bundle. `failure_reason` then holds the comma-joined reasons even though the status is `fetched`. Reasons: `reel_private_or_deleted`, `fetch_login_required` (Instagram says this for both private reels and blocked requests), `fetch_failed`, `transcribe_failed`, `ocr_failed`. An unexpected throw marks the share `failed` with `internal_error`.
-- **Vendors:** `src/transcribe.js` is the only OpenAI code (`whisper-1`, plain `fetch`). `src/ocr.js` is the only Anthropic code so far (`claude-sonnet-5-5`, structured JSON output, low effort, server-side refusal fallback). Each validates the response and throws rather than guessing.
+- **Extraction:** `src/extract.js` runs one agent request (resuming on `pause_turn`) with `web_search`/`web_fetch` server tools and a strict `submit_result` tool. Structured outputs aren't used because they can't be combined with web-search citations. It returns the raw claims plus evidence: the text of all tool results, and the fetched pages' text. `src/verify.js` turns the claims into `shares.extraction.items[]` with `deadline`, `date_status` (`verified_official`, `verified_creator`, `conflict`, `passed`, `unconfirmed`, `none`), `calendar`, `link` and `note`. The model's raw answer is kept under `claimed`. Agent failures fail the share with `extraction_failed` or `extraction_invalid`, keeping the earlier reasons.
+- **Vendors:** `src/transcribe.js` is the only OpenAI code (`whisper-1`, plain `fetch`). `src/ocr.js` (structured JSON output, low effort) and `src/extract.js` (medium effort, web tools) are the only Anthropic code. Both use `claude-sonnet-5-5` with the server-side refusal fallback. Each validates the response and throws rather than guessing.
 - **Real reel payload:** `attachments[{type:"ig_reel", payload:{url, title, reel_video_id}}]`. `url` is the public reel *page*, not a video file. `title` is the caption. yt-dlp returns the creator's handle in `channel`; `uploader` is empty.
 
 ## Deployment (Railway)
