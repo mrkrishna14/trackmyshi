@@ -203,16 +203,26 @@ function cycleEnd(text) {
   return season === "winter" ? `${year}-03-31` : `${year}-${SEASON_END[season] || "12-31"}`;
 }
 
-// What module 4 writes to the calendar: the verified deadline, a reminder, or nothing. Only
-// status "none" gets a reminder: an unconfirmed, conflicting or passed date means a date
-// exists, and a reminder could land after it. A posting for a season that has already ended
-// (an old reel) gets no reminder either.
-function calendarEntry(date, link, today, cycle) {
+// A link to a specific posting, not a careers homepage like https://apply.careers.microsoft.com/.
+function isSpecificPosting(url) {
+  const { pathname, search } = new URL(url);
+  return pathname.replace(/\/+$/, "").length > 0 || search.length > 1;
+}
+
+// Closed by its own address, e.g. janestreet.com/join-jane-street/closed-internship/...
+const closedByUrl = (url) => /(^|[/_-])closed([/_-]|$)/i.test(new URL(url).pathname);
+
+// What module 4 writes to the calendar: the verified deadline, a reminder, or nothing.
+// A reminder says "this is open, apply soon", so it needs all of: no date anywhere (an
+// unconfirmed, conflicting or passed date could fall before the reminder), a link to a specific
+// posting the agent saw open, and a season that hasn't ended (old reels advertise past cycles).
+function calendarEntry(date, link, today, cycle, postingStatus) {
   if (date.deadline) return { kind: "deadline", ...date.deadline };
+  if (date.status !== "none" || !link || postingStatus !== "open") return null;
+  if (!isSpecificPosting(link.url) || closedByUrl(link.url)) return null;
   const end = cycleEnd(cycle);
   if (end && end < today) return null;
-  if (date.status === "none" && link) return { kind: "reminder", date: addDays(today, REMINDER_DAYS), time: null, timezone: null };
-  return null;
+  return { kind: "reminder", date: addDays(today, REMINDER_DAYS), time: null, timezone: null };
 }
 
 function reelCycleEnded(raw, today) {
@@ -254,7 +264,8 @@ async function verifyExtraction(result, bundle, { today, reference }) {
       // The reel advertised a season that has ended and the agent found a current posting instead,
       // so the reply and the event can say "updated from an older reel".
       updated_from: reelCycleEnded(raw, today) ? raw.reel_cycle : null,
-      calendar: calendarEntry(date, link, today, raw.cycle || raw.program),
+      posting_status: raw.posting_status,
+      calendar: calendarEntry(date, link, today, raw.cycle || raw.program, raw.posting_status),
       claimed: raw,
     });
   }

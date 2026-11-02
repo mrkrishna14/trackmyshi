@@ -46,12 +46,13 @@ const ITEM_FIELDS = {
   program_dates: nullable(STR),
   cycle: nullable(STR),
   reel_cycle: nullable(STR),
+  posting_status: { type: "string", enum: ["open", "closed", "unknown"] },
 };
 
 const SUBMIT_TOOL = {
   name: "submit_result",
   description:
-    "Report the opportunities in the reel. application_url is where a student applies; official_url is the page the official deadline quote was copied from (often the same). deadline_time is 24-hour HH:MM and deadline_timezone an IANA name, both only when the official page states them. creator_deadline_* is the deadline as the creator states it in the reel, with the source it was quoted from. cycle is the season and year the posting is for, e.g. \"Summer 2027\", as stated on the page or in the reel. reel_cycle is the season and year the reel itself talks about, only if the reel says it; it differs from cycle when you found a newer posting for an old reel.",
+    "Report the opportunities in the reel. application_url is where a student applies; official_url is the page the official deadline quote was copied from (often the same). deadline_time is 24-hour HH:MM and deadline_timezone an IANA name, both only when the official page states them. creator_deadline_* is the deadline as the creator states it in the reel, with the source it was quoted from. cycle is the season and year the posting is for, e.g. \"Summer 2027\", as stated on the page or in the reel. reel_cycle is the season and year the reel itself talks about, only if the reel says it; it differs from cycle when you found a newer posting for an old reel. posting_status is open only if you saw the specific posting accepting applications; closed if it says closed, filled or no longer accepting; otherwise unknown.",
   strict: true,
   input_schema: {
     type: "object",
@@ -137,7 +138,9 @@ function parseResult(input) {
   for (const item of input.items) {
     for (const [field, schema] of Object.entries(ITEM_FIELDS)) {
       const value = item?.[field];
-      const ok = schema.anyOf ? value === null || typeof value === "string" : typeof value === "string";
+      const ok = schema.anyOf
+        ? value === null || typeof value === "string"
+        : typeof value === "string" && (!schema.enum || schema.enum.includes(value));
       if (!ok) throw new ExtractionError("extraction_invalid", `item field ${field} is malformed`);
     }
   }

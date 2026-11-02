@@ -29,6 +29,9 @@ function item(overrides = {}) {
     creator_deadline_quote: "if you're watching this before November 15",
     creator_deadline_source: "transcript",
     program_dates: "January 11-14, 2027",
+    cycle: null,
+    reel_cycle: null,
+    posting_status: "open",
     ...overrides,
   };
 }
@@ -178,30 +181,38 @@ test.describe("pickLink", () => {
 test.describe("calendarEntry", () => {
   const { calendarEntry } = require("../src/verify");
   const link = { url: "https://careers.microsoft.com/pm-intern", source: "web", http: 200 };
+  const reminderFor = (l, status = "open", cycle = "Summer 2027") => calendarEntry({ status: "none", deadline: null }, l, today, cycle, status);
 
   test("a verified deadline is calendared as a deadline", () => {
     const date = { status: "verified_official", deadline: { date: "2026-11-12", time: "23:59", timezone: "America/New_York" } };
     assert.deepEqual(calendarEntry(date, link, today), { kind: "deadline", date: "2026-11-12", time: "23:59", timezone: "America/New_York" });
   });
 
-  test("a link with no deadline anywhere becomes a reminder three days out", () => {
-    assert.deepEqual(calendarEntry({ status: "none", deadline: null }, link, today), { kind: "reminder", date: "2026-11-04", time: null, timezone: null });
+  test("an open posting with no deadline anywhere becomes a reminder three days out", () => {
+    assert.deepEqual(reminderFor(link), { kind: "reminder", date: "2026-11-04", time: null, timezone: null });
   });
 
   test("no link, or a date that exists but can't be trusted, gives no entry", () => {
-    assert.equal(calendarEntry({ status: "none", deadline: null }, null, today), null);
+    assert.equal(reminderFor(null), null);
     for (const status of ["unconfirmed", "conflict", "passed"]) {
-      assert.equal(calendarEntry({ status, deadline: null }, link, today), null, status);
+      assert.equal(calendarEntry({ status, deadline: null }, link, today, null, "open"), null, status);
     }
   });
 
+  test("closed, unknown, homepage or closed-by-URL postings get no reminder", () => {
+    assert.equal(reminderFor(link, "closed"), null);
+    assert.equal(reminderFor(link, "unknown"), null);
+    assert.equal(reminderFor({ ...link, url: "https://apply.careers.microsoft.com/" }), null);
+    assert.equal(reminderFor({ ...link, url: "https://www.janestreet.com/join-jane-street/closed-internship/strategy-and-product-may-august-nyc/" }), null);
+    assert.equal(reminderFor({ ...link, url: "https://blackrock.tal.net/vx/candidate/so/pm/1/pl/1/opp/11986?instant=apply" }).kind, "reminder");
+  });
+
   test("a posting for a season that has ended gets no reminder", () => {
-    const none = { status: "none", deadline: null };
-    assert.equal(calendarEntry(none, link, today, "Summer 2026"), null);
-    assert.equal(calendarEntry(none, link, today, "Finance Internship Program (Summer 2026)"), null);
-    assert.equal(calendarEntry(none, link, today, "Summer 2027").kind, "reminder");
-    assert.equal(calendarEntry(none, link, today, "Winter 2026"), null);
-    assert.equal(calendarEntry(none, link, today, "PM Intern").kind, "reminder", "no season named");
+    assert.equal(reminderFor(link, "open", "Summer 2026"), null);
+    assert.equal(reminderFor(link, "open", "Finance Internship Program (Summer 2026)"), null);
+    assert.equal(reminderFor(link, "open", "Summer 2027").kind, "reminder");
+    assert.equal(reminderFor(link, "open", "Winter 2026"), null);
+    assert.equal(reminderFor(link, "open", "PM Intern").kind, "reminder", "no season named");
   });
 
   test("cycleEnd reads the season and year", () => {
@@ -218,7 +229,7 @@ test.describe("calendarEntry", () => {
   });
 
   test("reminders roll over month ends", () => {
-    assert.equal(calendarEntry({ status: "none", deadline: null }, link, "2026-12-30").date, "2027-01-02");
+    assert.equal(calendarEntry({ status: "none", deadline: null }, link, "2026-12-30", null, "open").date, "2027-01-02");
   });
 });
 

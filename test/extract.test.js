@@ -20,6 +20,7 @@ const goodItem = {
   program_dates: null,
   cycle: "Winter 2027",
   reel_cycle: null,
+  posting_status: "unknown",
 };
 
 function fakeClient(...responses) {
@@ -72,6 +73,11 @@ test("finishing without submit_result is extraction_invalid", async () => {
 test("a malformed result is extraction_invalid", async () => {
   const client = fakeClient({ stop_reason: "tool_use", content: [submit({ items: [{ ...goodItem, company: 7 }], none_reason: null })], usage: usage(1, 1) });
   await assert.rejects(extract(bundle, context, client), { reason: "extraction_invalid", message: /company/ });
+});
+
+test("a posting_status outside the allowed values is extraction_invalid", async () => {
+  const client = fakeClient({ stop_reason: "tool_use", content: [submit({ items: [{ ...goodItem, posting_status: "maybe" }], none_reason: null })], usage: usage(1, 1) });
+  await assert.rejects(extract(bundle, context, client), { reason: "extraction_invalid", message: /posting_status/ });
 });
 
 test("an API error is extraction_failed", async () => {
