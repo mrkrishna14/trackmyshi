@@ -174,3 +174,28 @@ test.describe("pickLink", () => {
     assert.deepEqual(link, { url: "https://jobs.example.com/focus", source: "caption", http: 200 });
   });
 });
+
+test.describe("calendarEntry", () => {
+  const { calendarEntry } = require("../src/verify");
+  const link = { url: "https://careers.microsoft.com/pm-intern", source: "web", http: 200 };
+
+  test("a verified deadline is calendared as a deadline", () => {
+    const date = { status: "verified_official", deadline: { date: "2026-11-12", time: "23:59", timezone: "America/New_York" } };
+    assert.deepEqual(calendarEntry(date, link, today), { kind: "deadline", date: "2026-11-12", time: "23:59", timezone: "America/New_York" });
+  });
+
+  test("a link with no deadline anywhere becomes a reminder three days out", () => {
+    assert.deepEqual(calendarEntry({ status: "none", deadline: null }, link, today), { kind: "reminder", date: "2026-11-04", time: null, timezone: null });
+  });
+
+  test("no link, or a date that exists but can't be trusted, gives no entry", () => {
+    assert.equal(calendarEntry({ status: "none", deadline: null }, null, today), null);
+    for (const status of ["unconfirmed", "conflict", "passed"]) {
+      assert.equal(calendarEntry({ status, deadline: null }, link, today), null, status);
+    }
+  });
+
+  test("reminders roll over month ends", () => {
+    assert.equal(calendarEntry({ status: "none", deadline: null }, link, "2026-12-30").date, "2027-01-02");
+  });
+});

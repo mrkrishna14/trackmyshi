@@ -178,11 +178,31 @@ function htmlToText(html) {
     .replace(/&quot;/g, '"');
 }
 
+// Opportunities with an application link but no deadline anywhere (postings that close when
+// filled) get an "apply soon" reminder this many days after the share instead of a deadline.
+const REMINDER_DAYS = 3;
+
+function addDays(iso, days) {
+  const date = new Date(`${iso}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+// What module 4 writes to the calendar: the verified deadline, a reminder, or nothing. Only
+// status "none" gets a reminder: an unconfirmed, conflicting or passed date means a date
+// exists, and a reminder could land after it.
+function calendarEntry(date, link, today) {
+  if (date.deadline) return { kind: "deadline", ...date.deadline };
+  if (date.status === "none" && link) return { kind: "reminder", date: addDays(today, REMINDER_DAYS), time: null, timezone: null };
+  return null;
+}
+
 async function verifyExtraction(result, bundle, { today, reference }) {
   const items = [];
   for (const raw of result.items) {
     const officialText = await officialPageText(raw.official_url, result.pageTexts);
     const date = decideDate(raw, { bundle, officialText, today, reference });
+    const link = await pickLink(raw, bundle, result.toolText);
     items.push({
       company: raw.company,
       program: raw.program,
@@ -190,13 +210,13 @@ async function verifyExtraction(result, bundle, { today, reference }) {
       deadline: date.deadline,
       date_status: date.status,
       date_source: date.source,
-      calendar: date.deadline !== null,
       note: date.note,
-      link: await pickLink(raw, bundle, result.toolText),
+      link,
+      calendar: calendarEntry(date, link, today),
       claimed: raw,
     });
   }
   return { items, none_reason: result.noneReason, usage: result.usage };
 }
 
-module.exports = { verifyExtraction, decideDate, quoteIn, quoteStatesDate, quoteStatesTime, nextOccurrence, pickLink, htmlToText };
+module.exports = { verifyExtraction, calendarEntry, decideDate, quoteIn, quoteStatesDate, quoteStatesTime, nextOccurrence, pickLink, htmlToText };

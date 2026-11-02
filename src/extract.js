@@ -17,11 +17,13 @@ You get the reel's caption, its audio transcript and the text visible on screen.
 3. Fetch the official page and read its application deadline.
 4. Call submit_result exactly once with what you found.
 
+When a reel lists several opportunities, cover every one: find each one's application page even when there is no deadline to look up. Budget about two searches per opportunity, and don't search for a deadline the reel doesn't mention if the application page is already found.
+
 Rules:
 - Every quote must be copied character for character from the fetched page or from the reel text. Code checks each quote against the source and discards any that don't match.
 - A deadline is the last date to apply. Program dates, event dates, start dates and interview dates are not deadlines; put them in program_dates.
 - A creator saying "if you're watching this before <date>" or "apply before <date>" is stating the application deadline.
-- If the official page gives no deadline (rolling or not stated), leave the official deadline fields null. Never estimate a date.
+- If the official page gives no deadline (rolling or not stated), leave the official deadline fields null but still report application_url. Never estimate a date.
 - Dates are YYYY-MM-DD. When a quote has no year, use the next occurrence of that date on or after the reel's post date.
 - If the reel promotes no specific opportunity, submit an empty items list and say why in none_reason.`;
 
@@ -62,9 +64,11 @@ const SUBMIT_TOOL = {
   },
 };
 
+// Caps, not targets: a single-program reel stops after a search or two, while a reel listing
+// six internships needs about two searches each.
 const TOOLS = [
-  { type: "web_search_20260209", name: "web_search", max_uses: 5 },
-  { type: "web_fetch_20260209", name: "web_fetch", max_uses: 6, max_content_tokens: 20000 },
+  { type: "web_search_20260209", name: "web_search", max_uses: 12 },
+  { type: "web_fetch_20260209", name: "web_fetch", max_uses: 12, max_content_tokens: 20000 },
   SUBMIT_TOOL,
 ];
 

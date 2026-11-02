@@ -77,7 +77,8 @@ async function runExtraction(share, deps = { extract, verifyExtraction, today: t
   const extraction = await deps.verifyExtraction(result, bundle, { today, reference });
   if (extraction.items.length === 0) log(mid, `no opportunity found: ${extraction.none_reason}`);
   for (const [i, item] of extraction.items.entries()) {
-    const date = item.deadline ? `${item.deadline.date}${item.deadline.time ? ` ${item.deadline.time} ${item.deadline.timezone}` : ""}` : "none";
+    const entry = item.calendar;
+    const date = entry ? `${entry.kind} ${entry.date}${entry.time ? ` ${entry.time} ${entry.timezone}` : ""}` : "none";
     const link = item.link ? `${item.link.source} ${item.link.url}` : "none";
     log(mid, `item ${i} ${item.company} / ${item.program}: date=${date} (${item.date_status}${item.note ? `: ${item.note}` : ""}) link=${link}`);
     // The evidence behind the date, so every calendared date can be audited from the logs.
