@@ -59,6 +59,11 @@ test("a stated time keeps its own timezone and skips the timezone lookup", async
   assert.match(body.description, /from the official application page/);
 });
 
+test("a posting found for an old reel says so in the event", () => {
+  const body = eventBody(reminder, { ...focus, updated_from: "Summer 2026" }, share, null);
+  assert.match(body.description, /The reel was about Summer 2026, which has ended; this is the current posting\./);
+});
+
 test("a reminder is an all-day 'Apply soon' event", () => {
   const body = eventBody(reminder, { ...focus, company: "Microsoft", program: "PM Intern", program_dates: null }, share, null);
   assert.equal(body.summary, "Apply soon: Microsoft PM Intern");

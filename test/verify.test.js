@@ -228,3 +228,26 @@ test("freshEntry drops deadlines that have passed and reminders for ended season
   assert.equal(freshEntry({ calendar: reminder, program: "PM Intern", cycle: "Summer 2027" }, today), reminder);
   assert.equal(freshEntry({ calendar: null }, today), null);
 });
+
+test.describe("verifyExtraction marks postings found for an old reel", () => {
+  const { verifyExtraction } = require("../src/verify");
+  const realFetch = global.fetch;
+  test.afterEach(() => (global.fetch = realFetch));
+
+  async function run(cycle, reel_cycle) {
+    global.fetch = async () => new Response("", { status: 200 });
+    const raw = item({ application_url: null, official_url: null, creator_deadline_date: null, creator_deadline_quote: null, creator_deadline_source: null, cycle, reel_cycle });
+    const result = await verifyExtraction({ items: [raw], noneReason: null, toolText: "[]", pageTexts: {}, usage: {} }, bundle, { today, reference });
+    return result.items[0];
+  }
+
+  test("an ended reel season with a current posting is recorded as updated_from", async () => {
+    assert.equal((await run("Summer 2027", "Summer 2026")).updated_from, "Summer 2026");
+  });
+
+  test("a current reel, or an old reel with only the old posting, is not", async () => {
+    assert.equal((await run("Summer 2027", "Summer 2027")).updated_from, null);
+    assert.equal((await run("Summer 2026", "Summer 2026")).updated_from, null);
+    assert.equal((await run("Summer 2027", null)).updated_from, null);
+  });
+});

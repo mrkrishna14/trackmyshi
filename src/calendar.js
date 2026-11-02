@@ -86,6 +86,7 @@ function eventBody(entry, item, share, calendarTz) {
   const lines = [];
   if (entry.kind === "deadline") lines.push(`Application deadline, ${SOURCE_LABELS[item.date_source] || "verified"}.`);
   else lines.push("No official deadline was found. Postings like this can close without warning, so apply soon.");
+  if (item.updated_from) lines.push(`The reel was about ${item.updated_from}, which has ended; this is the current posting.`);
   lines.push(item.link ? `Apply: ${item.link.url}` : "No application link was found.");
   if (item.note) lines.push(`Note: ${item.note}.`);
   if (item.program_dates) lines.push(`Program dates: ${item.program_dates}`);

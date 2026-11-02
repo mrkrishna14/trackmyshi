@@ -19,6 +19,7 @@ const goodItem = {
   creator_deadline_source: "transcript",
   program_dates: null,
   cycle: "Winter 2027",
+  reel_cycle: null,
 };
 
 function fakeClient(...responses) {

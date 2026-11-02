@@ -211,6 +211,12 @@ function calendarEntry(date, link, today, cycle) {
   return null;
 }
 
+function reelCycleEnded(raw, today) {
+  const reelEnd = cycleEnd(raw.reel_cycle);
+  const postingEnd = cycleEnd(raw.cycle || raw.program);
+  return Boolean(reelEnd && reelEnd < today && postingEnd && postingEnd >= today);
+}
+
 // Re-checked when the calendar is written, which can be later than extraction (a share
 // re-queued after a restart): a deadline that has since passed, or a reminder for a season
 // that has ended, is not written.
@@ -240,6 +246,9 @@ async function verifyExtraction(result, bundle, { today, reference }) {
       note: date.note,
       link,
       cycle: raw.cycle,
+      // The reel advertised a season that has ended and the agent found a current posting instead,
+      // so the reply and the event can say "updated from an older reel".
+      updated_from: reelCycleEnded(raw, today) ? raw.reel_cycle : null,
       calendar: calendarEntry(date, link, today, raw.cycle || raw.program),
       claimed: raw,
     });
