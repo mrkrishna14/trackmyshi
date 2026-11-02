@@ -207,7 +207,11 @@ test.describe("calendarEntry", () => {
   test("cycleEnd reads the season and year", () => {
     const { cycleEnd } = require("../src/verify");
     assert.equal(cycleEnd("Summer 2026"), "2026-08-31");
-    assert.equal(cycleEnd("2027 Summer Analyst"), "2027-12-31");
+    assert.equal(cycleEnd("2027 Summer Analyst"), "2027-08-31");
+    assert.equal(cycleEnd("BlackRock 2026 Summer Internship Program - AMERS"), "2026-08-31");
+    assert.equal(cycleEnd("Product Manager Intern (2026 Summer, BS/MS)"), "2026-08-31");
+    assert.equal(cycleEnd("Summer, 2026"), "2026-08-31");
+    assert.equal(cycleEnd("New Grad 2027"), "2027-12-31");
     assert.equal(cycleEnd("Fall 2026 co-op"), "2026-12-31");
     assert.equal(cycleEnd("Winter 2027"), "2027-03-31");
     assert.equal(cycleEnd("Product Manager Intern"), null);
@@ -227,6 +231,7 @@ test("freshEntry drops deadlines that have passed and reminders for ended season
   assert.equal(freshEntry({ calendar: reminder, program: "Finance Internship (Summer 2026)", cycle: null }, today), null);
   assert.equal(freshEntry({ calendar: reminder, program: "PM Intern", cycle: "Summer 2027" }, today), reminder);
   assert.equal(freshEntry({ calendar: null }, today), null);
+  assert.equal(freshEntry({ calendar: true, deadline: { date: "2026-11-15" } }, today), null, "older row format is skipped, not crashed on");
 });
 
 test.describe("verifyExtraction marks postings found for an old reel", () => {

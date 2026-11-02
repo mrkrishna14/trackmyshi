@@ -192,10 +192,14 @@ function addDays(iso, days) {
 // Winter programs run into the next spring.
 const SEASON_END = { spring: "05-31", summer: "08-31", fall: "12-31", autumn: "12-31" };
 
+// Reads "Summer 2026", "2026 Summer" and "Summer, 2026" alike.
 function cycleEnd(text) {
-  const match = String(text || "").toLowerCase().match(/\b(?:(spring|summer|fall|autumn|winter)\s*)?(20\d{2})\b/);
-  if (!match) return null;
-  const [, season, year] = match;
+  const t = String(text || "").toLowerCase();
+  const seasons = "spring|summer|fall|autumn|winter";
+  const match = t.match(new RegExp(`\\b(${seasons})[\\s,]*(20\\d{2})\\b`)) || t.match(new RegExp(`\\b(20\\d{2})[\\s,]*(${seasons})\\b`));
+  const yearOnly = t.match(/\b(20\d{2})\b/);
+  if (!match && !yearOnly) return null;
+  const [season, year] = match ? (/^\d/.test(match[1]) ? [match[2], match[1]] : [match[1], match[2]]) : [null, yearOnly[1]];
   return season === "winter" ? `${year}-03-31` : `${year}-${SEASON_END[season] || "12-31"}`;
 }
 
@@ -222,7 +226,8 @@ function reelCycleEnded(raw, today) {
 // that has ended, is not written.
 function freshEntry(item, today) {
   const entry = item.calendar;
-  if (!entry) return null;
+  // Anything that isn't a well-formed entry (e.g. a row saved by an older version) is skipped.
+  if (!entry || !["deadline", "reminder"].includes(entry.kind) || !isIsoDate(entry.date)) return null;
   if (entry.kind === "deadline") return entry.date >= today ? entry : null;
   const end = cycleEnd(item.cycle || item.program);
   return end && end < today ? null : entry;
