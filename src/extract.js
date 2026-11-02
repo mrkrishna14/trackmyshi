@@ -24,6 +24,7 @@ Rules:
 - A deadline is the last date to apply. Program dates, event dates, start dates and interview dates are not deadlines; put them in program_dates.
 - A creator saying "if you're watching this before <date>" or "apply before <date>" is stating the application deadline.
 - If the official page gives no deadline (rolling or not stated), leave the official deadline fields null but still report application_url. Never estimate a date.
+- Recruiting runs ahead of the season: in autumn, students apply for next summer. If the reel is about a cycle that has already ended (an old reel), find the same program's current-cycle posting instead. If there isn't one, report the old posting with its cycle so it isn't mistaken for an open one.
 - Dates are YYYY-MM-DD. When a quote has no year, use the next occurrence of that date on or after the reel's post date.
 - If the reel promotes no specific opportunity, submit an empty items list and say why in none_reason.`;
 
@@ -43,12 +44,13 @@ const ITEM_FIELDS = {
   creator_deadline_quote: nullable(STR),
   creator_deadline_source: nullable({ type: "string", enum: ["caption", "transcript", "ocr"] }),
   program_dates: nullable(STR),
+  cycle: nullable(STR),
 };
 
 const SUBMIT_TOOL = {
   name: "submit_result",
   description:
-    "Report the opportunities in the reel. application_url is where a student applies; official_url is the page the official deadline quote was copied from (often the same). deadline_time is 24-hour HH:MM and deadline_timezone an IANA name, both only when the official page states them. creator_deadline_* is the deadline as the creator states it in the reel, with the source it was quoted from.",
+    "Report the opportunities in the reel. application_url is where a student applies; official_url is the page the official deadline quote was copied from (often the same). deadline_time is 24-hour HH:MM and deadline_timezone an IANA name, both only when the official page states them. creator_deadline_* is the deadline as the creator states it in the reel, with the source it was quoted from. cycle is the season and year the posting is for, e.g. \"Summer 2027\", as stated on the page or in the reel.",
   strict: true,
   input_schema: {
     type: "object",

@@ -195,6 +195,24 @@ test.describe("calendarEntry", () => {
     }
   });
 
+  test("a posting for a season that has ended gets no reminder", () => {
+    const none = { status: "none", deadline: null };
+    assert.equal(calendarEntry(none, link, today, "Summer 2026"), null);
+    assert.equal(calendarEntry(none, link, today, "Finance Internship Program (Summer 2026)"), null);
+    assert.equal(calendarEntry(none, link, today, "Summer 2027").kind, "reminder");
+    assert.equal(calendarEntry(none, link, today, "Winter 2026"), null);
+    assert.equal(calendarEntry(none, link, today, "PM Intern").kind, "reminder", "no season named");
+  });
+
+  test("cycleEnd reads the season and year", () => {
+    const { cycleEnd } = require("../src/verify");
+    assert.equal(cycleEnd("Summer 2026"), "2026-08-31");
+    assert.equal(cycleEnd("2027 Summer Analyst"), "2027-12-31");
+    assert.equal(cycleEnd("Fall 2026 co-op"), "2026-12-31");
+    assert.equal(cycleEnd("Winter 2027"), "2027-03-31");
+    assert.equal(cycleEnd("Product Manager Intern"), null);
+  });
+
   test("reminders roll over month ends", () => {
     assert.equal(calendarEntry({ status: "none", deadline: null }, link, "2026-12-30").date, "2027-01-02");
   });

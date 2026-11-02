@@ -109,10 +109,10 @@ async function buildBundle(share, dir, deps = { fetchReel, media, transcribe, oc
     ({ durationSec, hasAudio } = await deps.media.probe(video.videoPath));
     bundle.durationSec = Math.round(durationSec);
     const { size } = await fs.stat(video.videoPath);
-    log(mid, `fetched ${bundle.durationSec}s video in ${seconds(start)} (${(size / 1e6).toFixed(1)} MB)`);
+    log(mid, `fetched ${share.reel_url} (${bundle.durationSec}s video) in ${seconds(start)} (${(size / 1e6).toFixed(1)} MB)`);
   } catch (err) {
     problems.push(err.reason || "fetch_failed");
-    log(mid, `fetch failed in ${seconds(start)}, continuing with caption only: ${err.message}`);
+    log(mid, `fetch of ${share.reel_url} failed in ${seconds(start)}, continuing with caption only: ${err.message}`);
     return { bundle, problems };
   }
 

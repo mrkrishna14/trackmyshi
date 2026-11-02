@@ -18,6 +18,7 @@ const goodItem = {
   creator_deadline_quote: "before November 15",
   creator_deadline_source: "transcript",
   program_dates: null,
+  cycle: "Winter 2027",
 };
 
 function fakeClient(...responses) {

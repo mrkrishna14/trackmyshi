@@ -188,11 +188,25 @@ function addDays(iso, days) {
   return date.toISOString().slice(0, 10);
 }
 
+// Last day of the season a posting is for: "Summer 2026" -> 2026-08-31, a bare "2026" -> 2026-12-31.
+// Winter programs run into the next spring.
+const SEASON_END = { spring: "05-31", summer: "08-31", fall: "12-31", autumn: "12-31" };
+
+function cycleEnd(text) {
+  const match = String(text || "").toLowerCase().match(/\b(?:(spring|summer|fall|autumn|winter)\s*)?(20\d{2})\b/);
+  if (!match) return null;
+  const [, season, year] = match;
+  return season === "winter" ? `${year}-03-31` : `${year}-${SEASON_END[season] || "12-31"}`;
+}
+
 // What module 4 writes to the calendar: the verified deadline, a reminder, or nothing. Only
 // status "none" gets a reminder: an unconfirmed, conflicting or passed date means a date
-// exists, and a reminder could land after it.
-function calendarEntry(date, link, today) {
+// exists, and a reminder could land after it. A posting for a season that has already ended
+// (an old reel) gets no reminder either.
+function calendarEntry(date, link, today, cycle) {
   if (date.deadline) return { kind: "deadline", ...date.deadline };
+  const end = cycleEnd(cycle);
+  if (end && end < today) return null;
   if (date.status === "none" && link) return { kind: "reminder", date: addDays(today, REMINDER_DAYS), time: null, timezone: null };
   return null;
 }
@@ -203,6 +217,8 @@ async function verifyExtraction(result, bundle, { today, reference }) {
     const officialText = await officialPageText(raw.official_url, result.pageTexts);
     const date = decideDate(raw, { bundle, officialText, today, reference });
     const link = await pickLink(raw, bundle, result.toolText);
+    const end = cycleEnd(raw.cycle || raw.program);
+    if (!date.deadline && end && end < today) date.note = `posting is for ${raw.cycle || raw.program}, which has ended`;
     items.push({
       company: raw.company,
       program: raw.program,
@@ -212,11 +228,12 @@ async function verifyExtraction(result, bundle, { today, reference }) {
       date_source: date.source,
       note: date.note,
       link,
-      calendar: calendarEntry(date, link, today),
+      cycle: raw.cycle,
+      calendar: calendarEntry(date, link, today, raw.cycle || raw.program),
       claimed: raw,
     });
   }
   return { items, none_reason: result.noneReason, usage: result.usage };
 }
 
-module.exports = { verifyExtraction, calendarEntry, decideDate, quoteIn, quoteStatesDate, quoteStatesTime, nextOccurrence, pickLink, htmlToText };
+module.exports = { verifyExtraction, calendarEntry, cycleEnd, decideDate, quoteIn, quoteStatesDate, quoteStatesTime, nextOccurrence, pickLink, htmlToText };
