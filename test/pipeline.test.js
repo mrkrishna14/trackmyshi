@@ -125,3 +125,38 @@ test.describe("runExtraction", () => {
     assert.equal(checked, false);
   });
 });
+
+const { runCalendar } = require("../src/pipeline");
+const { CalendarError } = require("../src/calendar");
+
+test.describe("runCalendar", () => {
+  const item = (calendar, extra = {}) => ({ company: "Jane Street", program: "FOCUS", cycle: null, calendar, ...extra });
+  const share = {
+    mid: "m3",
+    extraction: {
+      items: [
+        item({ kind: "deadline", date: "2026-11-15", time: null, timezone: null }),
+        item({ kind: "reminder", date: "2026-11-04", time: null, timezone: null }, { program: "Finance (Summer 2026)" }),
+        item(null),
+      ],
+    },
+  };
+
+  test("writes only entries that are still valid and returns the events", async () => {
+    let passed;
+    const { events } = await runCalendar(share, {
+      today: "2026-11-01",
+      writeEvents: async (s, entries) => ((passed = entries), entries.map((e) => ({ id: "abcdef1234567", kind: e.entry.kind, date: e.entry.date, summary: "s" }))),
+    });
+    assert.equal(passed.length, 1, "the Summer 2026 reminder and the item without an entry are skipped");
+    assert.equal(events[0].date, "2026-11-15");
+  });
+
+  test("a calendar error becomes its reason", async () => {
+    const result = await runCalendar(share, {
+      today: "2026-11-01",
+      writeEvents: async () => { throw new CalendarError("google_reauth_needed", "revoked"); },
+    });
+    assert.deepEqual(result, { reason: "google_reauth_needed" });
+  });
+});

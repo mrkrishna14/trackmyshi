@@ -35,7 +35,7 @@ async function insertShare({ mid, senderId, reelUrl, caption }) {
 }
 
 // Stage results that are saved together with the status change that produced them.
-const RESULT_COLUMNS = ["bundle", "extraction"];
+const RESULT_COLUMNS = ["bundle", "extraction", "event_ids"];
 
 async function setStatus(mid, status, failureReason = null, results = {}) {
   const sets = ["status = $2", "failure_reason = $3"];

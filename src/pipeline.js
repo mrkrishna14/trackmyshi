@@ -8,7 +8,8 @@ const media = require("./media");
 const { transcribe } = require("./transcribe");
 const { ocr } = require("./ocr");
 const { extract } = require("./extract");
-const { verifyExtraction } = require("./verify");
+const { verifyExtraction, freshEntry } = require("./verify");
+const { writeEvents } = require("./calendar");
 
 async function receiveReel(reel) {
   if (!(await db.insertShare(reel))) {
@@ -19,7 +20,7 @@ async function receiveReel(reel) {
 }
 
 // Each stage reads the row, does its work and saves the next status, so a share re-queued after
-// a restart resumes at the stage it reached. Calendar -> reply arrive in modules 4-5.
+// a restart resumes at the stage it reached. The reply arrives in module 5.
 async function processShare(mid) {
   let share = await db.getShare(mid);
   if (!share) return;
@@ -27,6 +28,7 @@ async function processShare(mid) {
   try {
     if (share.status === "received") share = await fetchStage(share);
     if (share.status === "fetched") share = await extractStage(share);
+    if (share.status === "extracted") share = await calendarStage(share);
   } catch (err) {
     console.log(`share mid=${mid} stage threw: ${err.stack || err.message}`);
     await db.setStatus(mid, "failed", "internal_error");
@@ -51,6 +53,34 @@ async function extractStage(share) {
   if (reason) await db.setStatus(share.mid, "failed", [...problems, reason].join(","));
   else await db.setStatus(share.mid, "extracted", problems.join(",") || null, { extraction });
   return db.getShare(share.mid);
+}
+
+async function calendarStage(share) {
+  const problems = share.failure_reason ? share.failure_reason.split(",") : [];
+  const { events, reason } = await runCalendar(share);
+  if (reason) await db.setStatus(share.mid, "failed", [...problems, reason].join(","));
+  else await db.setStatus(share.mid, "calendared", problems.join(",") || null, { event_ids: events });
+  return db.getShare(share.mid);
+}
+
+// Writes each item's calendar entry that is still valid. Returns { events } or { reason }.
+async function runCalendar(share, deps = { writeEvents, today: todayIso() }) {
+  const { mid } = share;
+  const entries = share.extraction.items
+    .map((item) => ({ item, entry: freshEntry(item, deps.today) }))
+    .filter(({ entry }) => entry);
+  const skipped = share.extraction.items.filter((item) => item.calendar).length - entries.length;
+  if (skipped) log(mid, `calendar skipped ${skipped} entr${skipped === 1 ? "y" : "ies"} no longer valid`);
+  const start = Date.now();
+  try {
+    const events = await deps.writeEvents(share, entries);
+    for (const e of events) log(mid, `calendar wrote ${e.kind} ${e.date} "${e.summary}" id=${e.id.slice(0, 12)}`);
+    if (events.length === 0) log(mid, "nothing to put on the calendar");
+    return { events };
+  } catch (err) {
+    log(mid, `calendar failed in ${seconds(start)}: ${err.message}`);
+    return { reason: err.reason || "calendar_failed" };
+  }
 }
 
 // "Today" in the westernmost US timezone, so a deadline later today still counts as upcoming.
@@ -157,4 +187,4 @@ async function requeueInProgress() {
   console.log(`requeued ${mids.length} in-progress share(s)`);
 }
 
-module.exports = { receiveReel, requeueInProgress, buildBundle, runExtraction };
+module.exports = { receiveReel, requeueInProgress, buildBundle, runExtraction, runCalendar };

@@ -211,6 +211,17 @@ function calendarEntry(date, link, today, cycle) {
   return null;
 }
 
+// Re-checked when the calendar is written, which can be later than extraction (a share
+// re-queued after a restart): a deadline that has since passed, or a reminder for a season
+// that has ended, is not written.
+function freshEntry(item, today) {
+  const entry = item.calendar;
+  if (!entry) return null;
+  if (entry.kind === "deadline") return entry.date >= today ? entry : null;
+  const end = cycleEnd(item.cycle || item.program);
+  return end && end < today ? null : entry;
+}
+
 async function verifyExtraction(result, bundle, { today, reference }) {
   const items = [];
   for (const raw of result.items) {
@@ -236,4 +247,4 @@ async function verifyExtraction(result, bundle, { today, reference }) {
   return { items, none_reason: result.noneReason, usage: result.usage };
 }
 
-module.exports = { verifyExtraction, calendarEntry, cycleEnd, decideDate, quoteIn, quoteStatesDate, quoteStatesTime, nextOccurrence, pickLink, htmlToText };
+module.exports = { verifyExtraction, calendarEntry, freshEntry, cycleEnd, decideDate, quoteIn, quoteStatesDate, quoteStatesTime, nextOccurrence, pickLink, htmlToText };

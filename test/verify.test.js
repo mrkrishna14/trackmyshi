@@ -217,3 +217,14 @@ test.describe("calendarEntry", () => {
     assert.equal(calendarEntry({ status: "none", deadline: null }, link, "2026-12-30").date, "2027-01-02");
   });
 });
+
+test("freshEntry drops deadlines that have passed and reminders for ended seasons at write time", () => {
+  const { freshEntry } = require("../src/verify");
+  const deadline = { kind: "deadline", date: "2026-11-15", time: null, timezone: null };
+  const reminder = { kind: "reminder", date: "2026-11-04", time: null, timezone: null };
+  assert.equal(freshEntry({ calendar: deadline }, "2026-11-15"), deadline);
+  assert.equal(freshEntry({ calendar: deadline }, "2026-11-16"), null);
+  assert.equal(freshEntry({ calendar: reminder, program: "Finance Internship (Summer 2026)", cycle: null }, today), null);
+  assert.equal(freshEntry({ calendar: reminder, program: "PM Intern", cycle: "Summer 2027" }, today), reminder);
+  assert.equal(freshEntry({ calendar: null }, today), null);
+});
