@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const { Pool } = require("pg");
+const { messageKey } = require("./webhook");
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 pool.on("error", (err) => console.log("postgres pool error:", err.message));
@@ -82,11 +83,9 @@ async function insertText(mid, senderId) {
 // sender's most recent replied share that put something on the calendar.
 async function shareToUndo(senderId, replyToMid) {
   if (replyToMid) {
-    const { rows } = await pool.query(
-      "SELECT * FROM shares WHERE sender_id = $1 AND (reply_mid = $2 OR mid = $2)",
-      [senderId, replyToMid]
-    );
-    return rows[0];
+    const key = messageKey(replyToMid);
+    const { rows } = await pool.query("SELECT * FROM shares WHERE sender_id = $1 ORDER BY received_at DESC LIMIT 200", [senderId]);
+    return rows.find((row) => messageKey(row.reply_mid) === key || messageKey(row.mid) === key);
   }
   const { rows } = await pool.query(
     `SELECT * FROM shares WHERE sender_id = $1 AND status = 'replied' AND jsonb_array_length(event_ids) > 0

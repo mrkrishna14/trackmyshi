@@ -41,8 +41,17 @@ function parseEvents(body) {
   return events;
 }
 
+// Meta writes the same message's id differently when we send it ("new_ig_dm_item:...") and when
+// it refers back to it in a reply ("ig_dm_item:..."). Both are base64 with Z-escapes
+// ("ZA" = "Z", "ZD" = "=") and end in the same message number, which is what to compare.
+function messageKey(mid) {
+  if (!mid) return null;
+  const decoded = Buffer.from(mid.replace(/Z([AD])/g, (_, c) => (c === "A" ? "Z" : "=")), "base64").toString("latin1");
+  return decoded.match(/IGMessageID:\d+:\d+:(\d+)/)?.[1] || mid;
+}
+
 function asArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
-module.exports = { verifySignature, parseEvents };
+module.exports = { verifySignature, parseEvents, messageKey };

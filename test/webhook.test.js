@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { verifySignature, parseEvents } = require("../src/webhook");
+const { verifySignature, parseEvents, messageKey } = require("../src/webhook");
 const { sign } = require("./helpers");
 const fixture = require("./fixtures/reel-share.json");
 
@@ -59,4 +59,17 @@ test("parseEvents tolerates malformed bodies without throwing", () => {
     assert.deepEqual(parseEvents(body), []);
   }
   assert.deepEqual(parseEvents(messaging({ mid: "m1", attachments: "nope" })), []);
+});
+
+test("messageKey matches the id Meta returns on send with the id it uses in replies", () => {
+  // Real ids of the same thread: our sent reply, and a received message.
+  const sent = "bmV3X2lnX2RtX2l0ZAW06MTpJR01lc3NhZA2VJRDoxNzg0MTQzNDgxMjIzNTgwNjozNDAyODIzNjY4NDE3MTAzMDEyNDQyNTkzMDc4NDA0MDM0NTcxNzg6MzMwODc1MjgxMjk3ODc3NTE3ODM0NzYxNTgwNTM0ODI0OTYZD";
+  const received = "aWdfZAG1faXRlbToxOklHTWVzc2FnZAUlEOjE3ODQxNDM0ODEyMjM1ODA2OjM0MDI4MjM2Njg0MTcxMDMwMTI0NDI1OTMwNzg0MDQwMzQ1NzE3ODozMzA4Mjk1NDA1OTExNDUzODU2OTg3Mzg3ODQxMzIxMzY5NgZDZD";
+  assert.equal(messageKey(sent), "33087528129787751783476158053482496");
+  assert.equal(messageKey(received), "33082954059114538569873878413213696");
+  // The same message as Meta refers to it in a reply: same number, ig_dm_item prefix.
+  const asReply = Buffer.from("ig_dm_item:1:IGMessageID:17841434812235806:340282366841710301244259307840403457178:33087528129787751783476158053482496").toString("base64").replace(/Z/g, "ZA").replace(/=/g, "ZD");
+  assert.equal(messageKey(asReply), messageKey(sent));
+  assert.equal(messageKey("plain-test-id"), "plain-test-id");
+  assert.equal(messageKey(null), null);
 });

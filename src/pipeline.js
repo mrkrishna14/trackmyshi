@@ -85,6 +85,7 @@ async function handleText(event) {
     return;
   }
   const share = await db.shareToUndo(senderId, event.replyToMid);
+  console.log(`text mid=${mid} sender=${senderId} undo ${event.replyToMid ? "as a reply" : "without a reply"} -> share ${share ? share.mid : "none"}`);
   if (!share || share.status === "undone") {
     console.log(`text mid=${mid} sender=${senderId} undo found ${share ? "an already undone share" : "nothing"}`);
     await send(mid, senderId, replies.undoReply(share, [])).catch(() => {});
