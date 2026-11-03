@@ -35,15 +35,15 @@ async function insertShare({ mid, senderId, reelUrl, caption }) {
 }
 
 // Stage results that are saved together with the status change that produced them.
-const RESULT_COLUMNS = ["bundle", "extraction", "event_ids"];
+const RESULT_COLUMNS = { bundle: "json", extraction: "json", event_ids: "json", reply_mid: "text" };
 
 async function setStatus(mid, status, failureReason = null, results = {}) {
   const sets = ["status = $2", "failure_reason = $3"];
   const values = [mid, status, failureReason];
   if (STAGE_COLUMNS[status]) sets.push(`${STAGE_COLUMNS[status]} = now()`);
-  for (const column of RESULT_COLUMNS) {
+  for (const [column, type] of Object.entries(RESULT_COLUMNS)) {
     if (!(column in results)) continue;
-    values.push(JSON.stringify(results[column]));
+    values.push(type === "json" ? JSON.stringify(results[column]) : results[column]);
     sets.push(`${column} = $${values.length}`);
   }
   const { rows } = await pool.query(
@@ -69,4 +69,31 @@ async function inProgressMids() {
   return rows.map((row) => row.mid);
 }
 
-module.exports = { pool, init, insertShare, setStatus, getShare, inProgressMids };
+// Returns false when the text was already seen (a Meta redelivery).
+async function insertText(mid, senderId) {
+  const { rowCount } = await pool.query(
+    "INSERT INTO texts (mid, sender_id) VALUES ($1, $2) ON CONFLICT (mid) DO NOTHING",
+    [mid, senderId]
+  );
+  return rowCount === 1;
+}
+
+// The share an "undo" means: the one whose reply (or own message) it answers, else the
+// sender's most recent replied share that put something on the calendar.
+async function shareToUndo(senderId, replyToMid) {
+  if (replyToMid) {
+    const { rows } = await pool.query(
+      "SELECT * FROM shares WHERE sender_id = $1 AND (reply_mid = $2 OR mid = $2)",
+      [senderId, replyToMid]
+    );
+    return rows[0];
+  }
+  const { rows } = await pool.query(
+    `SELECT * FROM shares WHERE sender_id = $1 AND status = 'replied' AND jsonb_array_length(event_ids) > 0
+     ORDER BY received_at DESC LIMIT 1`,
+    [senderId]
+  );
+  return rows[0];
+}
+
+module.exports = { pool, init, insertShare, setStatus, getShare, inProgressMids, insertText, shareToUndo };

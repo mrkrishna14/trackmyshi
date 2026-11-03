@@ -12,7 +12,7 @@ test.describe("db", { skip: SKIP_DB }, () => {
     await db.init();
     await db.init(); // schema must be safe to re-apply on every boot
   });
-  test.beforeEach(() => db.pool.query("TRUNCATE shares"));
+  test.beforeEach(() => db.pool.query("TRUNCATE shares, texts"));
   test.after(() => db.pool.end());
 
   test("insertShare dedupes on mid", async () => {
@@ -67,5 +67,34 @@ test.describe("db", { skip: SKIP_DB }, () => {
     await db.pool.query("UPDATE shares SET received_at = now() - interval '25 hours' WHERE mid = 'stale'");
 
     assert.deepEqual((await db.inProgressMids()).sort(), ["fresh", "midway"]);
+  });
+
+  test("insertText dedupes on mid", async () => {
+    assert.equal(await db.insertText("t1", "s1"), true);
+    assert.equal(await db.insertText("t1", "s1"), false);
+  });
+
+  test("setStatus stores reply_mid as plain text", async () => {
+    await db.insertShare(share);
+    await db.setStatus("m1", "replied", null, { reply_mid: "bot-reply-1" });
+    assert.equal((await db.getShare("m1")).reply_mid, "bot-reply-1");
+  });
+
+  test("shareToUndo finds the replied-to share, else the sender's latest share with events", async () => {
+    const event = [{ id: "e", index: 0, kind: "deadline", date: "2026-11-15", summary: "Deadline: X" }];
+    for (const mid of ["old", "new", "empty", "other"]) {
+      await db.insertShare({ ...share, mid, senderId: mid === "other" ? "s2" : "s1" });
+    }
+    await db.pool.query("UPDATE shares SET received_at = now() - interval '1 hour' WHERE mid = 'old'");
+    await db.setStatus("old", "replied", null, { event_ids: event, reply_mid: "reply-old" });
+    await db.setStatus("new", "replied", null, { event_ids: event, reply_mid: "reply-new" });
+    await db.setStatus("empty", "replied", null, { event_ids: [] });
+    await db.setStatus("other", "replied", null, { event_ids: event });
+
+    assert.equal((await db.shareToUndo("s1", null)).mid, "new", "latest with events, ignoring the one with none");
+    assert.equal((await db.shareToUndo("s1", "reply-old")).mid, "old", "a reply to the bot's message picks that share");
+    assert.equal((await db.shareToUndo("s1", "old")).mid, "old", "a reply to the student's own share works too");
+    assert.equal(await db.shareToUndo("s1", "reply-of-someone-else"), undefined);
+    assert.equal(await db.shareToUndo("s2", "reply-new"), undefined, "never another student's share");
   });
 });

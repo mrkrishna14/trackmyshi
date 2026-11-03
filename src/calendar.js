@@ -1,4 +1,4 @@
-// writeEvents(share, entries) -> [{ id, kind, date, summary, link }]. The only place that knows
+// writeEvents(share, entries) -> [{ id, index, kind, date, summary, link }], and deleteEvents(ids) for undo. The only place that knows
 // about Google. Until module 6 every share goes to the owner's calendar, set up once with
 // scripts/google-auth.js and passed in as GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN.
 // Throws CalendarError: google_reauth_needed when the token is revoked, calendar_failed otherwise.
@@ -121,15 +121,23 @@ async function writeEvents(share, entries) {
   const calendarTz = entries.some((e) => e.entry.kind === "deadline" && !e.entry.time) ? await calendarTimeZone() : null;
   const seen = {};
   const written = [];
-  for (const { item, entry } of entries) {
+  for (const { item, entry, index } of entries) {
     const key = item.company.trim().toLowerCase();
     seen[key] = (seen[key] || 0) + 1;
     const id = eventId(share, item.company, seen[key]);
     const body = eventBody(entry, item, share, calendarTz);
     const event = await upsert(id, body);
-    written.push({ id, kind: entry.kind, date: entry.date, summary: body.summary, link: event.htmlLink || null });
+    written.push({ id, index, kind: entry.kind, date: entry.date, summary: body.summary, link: event.htmlLink || null });
   }
   return written;
+}
+
+// Undo. An event that is already gone (404/410) counts as removed.
+async function deleteEvents(ids) {
+  for (const id of ids) {
+    const res = await google("DELETE", `/events/${id}`);
+    if (![200, 204, 404, 410].includes(res.status)) throw new CalendarError("calendar_failed", `calendar delete returned ${res.status}`);
+  }
 }
 
 // For tests: forget the cached token and timezone.
@@ -138,4 +146,4 @@ function resetCache() {
   cachedTimeZone = null;
 }
 
-module.exports = { writeEvents, eventBody, eventId, CalendarError, resetCache };
+module.exports = { writeEvents, deleteEvents, eventBody, eventId, CalendarError, resetCache };

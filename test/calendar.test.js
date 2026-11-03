@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { writeEvents, eventBody, eventId, resetCache } = require("../src/calendar");
+const { writeEvents, deleteEvents, eventBody, eventId, resetCache } = require("../src/calendar");
 
 const share = { mid: "m1", sender_id: "2014204712601413", reel_url: "https://www.instagram.com/reel/De2uJ0aP1zu/" };
 const link = { url: "https://www.janestreet.com/apply-focus-nyc/", source: "web", http: 200 };
@@ -20,7 +20,7 @@ function fakeGoogle({ token = { access_token: "at", expires_in: 3600 }, tokenSta
     if (call.url.startsWith("https://oauth2.googleapis.com/token")) return Response.json(token, { status: tokenStatus });
     if (call.url.endsWith("/events?maxResults=1")) return Response.json({ timeZone: "America/Los_Angeles", items: [] });
     const { status, body } = insert(call);
-    return Response.json(body, { status });
+    return status === 204 ? new Response(null, { status }) : Response.json(body, { status });
   };
 }
 
@@ -35,7 +35,7 @@ test.afterEach(() => {
 
 test("a deadline without a time is a 30-minute block ending 11:59 PM in the calendar's timezone", async () => {
   fakeGoogle();
-  const [event] = await writeEvents(share, [{ item: focus, entry: deadline }]);
+  const [event] = await writeEvents(share, [{ item: focus, entry: deadline, index: 0 }]);
   const insert = calls.find((c) => c.method === "POST" && c.url.endsWith("/events"));
   const body = JSON.parse(insert.body);
   assert.equal(body.summary, "Deadline: Jane Street FOCUS");
@@ -45,7 +45,7 @@ test("a deadline without a time is a 30-minute block ending 11:59 PM in the cale
   assert.match(body.description, /as said in the reel; not confirmed on an official page/);
   assert.match(body.description, /Program dates: January 11-14, 2027/);
   assert.equal(body.id, eventId(share, "Jane Street", 1));
-  assert.deepEqual(event, { id: body.id, kind: "deadline", date: "2026-11-15", summary: body.summary, link: "https://calendar.google.com/e" });
+  assert.deepEqual(event, { id: body.id, index: 0, kind: "deadline", date: "2026-11-15", summary: body.summary, link: "https://calendar.google.com/e" });
   assert.match(calls[0].body.toString(), /grant_type=refresh_token/);
 });
 
@@ -111,4 +111,11 @@ test("no entries means no Google calls", async () => {
   fakeGoogle();
   assert.deepEqual(await writeEvents(share, []), []);
   assert.equal(calls.length, 0);
+});
+
+test("deleteEvents treats already-deleted events as removed and fails on other errors", async () => {
+  fakeGoogle({ insert: (call) => ({ status: call.url.endsWith("/gone") ? 410 : call.url.endsWith("/bad") ? 500 : 204, body: {} }) });
+  await deleteEvents(["a", "gone"]);
+  assert.deepEqual(calls.filter((c) => c.method === "DELETE").map((c) => c.url.split("/").pop()), ["a", "gone"]);
+  await assert.rejects(deleteEvents(["bad"]), { reason: "calendar_failed" });
 });

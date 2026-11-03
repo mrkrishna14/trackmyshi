@@ -1,7 +1,7 @@
 const express = require("express");
 const db = require("./src/db");
 const { verifySignature, parseEvents } = require("./src/webhook");
-const { receiveReel, requeueInProgress } = require("./src/pipeline");
+const { receiveReel, receiveText, requeueInProgress } = require("./src/pipeline");
 
 process.on("unhandledRejection", (err) => console.log("unhandled rejection:", err?.message || err));
 
@@ -60,8 +60,9 @@ app.post("/webhook", express.raw({ type: () => true, limit: "1mb" }), (req, res)
         .then(() => receiveReel(event))
         .catch((err) => console.log(`share mid=${event.mid} could not be recorded: ${err.message}`));
     } else {
-      // Text messages (undo, help) are routed in module 5.
-      console.log(`webhook ignored kind=${event.kind} mid=${event.mid}`);
+      ready
+        .then(() => receiveText(event))
+        .catch((err) => console.log(`text mid=${event.mid} could not be recorded: ${err.message}`));
     }
   }
 });

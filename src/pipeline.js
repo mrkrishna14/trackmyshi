@@ -9,7 +9,9 @@ const { transcribe } = require("./transcribe");
 const { ocr } = require("./ocr");
 const { extract } = require("./extract");
 const { verifyExtraction, freshEntry } = require("./verify");
-const { writeEvents } = require("./calendar");
+const { writeEvents, deleteEvents } = require("./calendar");
+const { sendText } = require("./instagram");
+const replies = require("./replies");
 
 async function receiveReel(reel) {
   if (!(await db.insertShare(reel))) {
@@ -20,7 +22,7 @@ async function receiveReel(reel) {
 }
 
 // Each stage reads the row, does its work and saves the next status, so a share re-queued after
-// a restart resumes at the stage it reached. The reply arrives in module 5.
+// a restart resumes at the stage it reached.
 async function processShare(mid) {
   let share = await db.getShare(mid);
   if (!share) return;
@@ -29,10 +31,75 @@ async function processShare(mid) {
     if (share.status === "received") share = await fetchStage(share);
     if (share.status === "fetched") share = await extractStage(share);
     if (share.status === "extracted") share = await calendarStage(share);
+    if (share.status === "calendared") share = await replyStage(share);
   } catch (err) {
     console.log(`share mid=${mid} stage threw: ${err.stack || err.message}`);
-    await db.setStatus(mid, "failed", "internal_error");
+    await fail(share, "internal_error");
   }
+}
+
+// Every failure ends in the row's reasons and an honest DM. A failed DM is only logged.
+async function fail(share, reason) {
+  const problems = share.failure_reason ? share.failure_reason.split(",") : [];
+  await db.setStatus(share.mid, "failed", [...problems, reason].join(","));
+  await send(share.mid, share.sender_id, replies.failureReply(reason)).catch(() => {});
+}
+
+async function send(mid, recipientId, text) {
+  try {
+    return await sendText(recipientId, text);
+  } catch (err) {
+    log(mid, `reply failed: ${err.message}`);
+    throw err;
+  }
+}
+
+async function replyStage(share) {
+  let replyMid;
+  try {
+    replyMid = await send(share.mid, share.sender_id, replies.shareReply(share));
+  } catch (err) {
+    await db.setStatus(share.mid, "failed", [share.failure_reason, err.reason || "reply_failed"].filter(Boolean).join(","));
+    return db.getShare(share.mid);
+  }
+  await db.setStatus(share.mid, "replied", share.failure_reason, { reply_mid: replyMid });
+  return db.getShare(share.mid);
+}
+
+// Text messages: "undo" removes a share's events, anything else gets one help line.
+async function receiveText(event) {
+  if (!(await db.insertText(event.mid, event.senderId))) {
+    console.log(`text mid=${event.mid} duplicate delivery ignored`);
+    return;
+  }
+  queue.enqueue(() => handleText(event));
+}
+
+const isUndo = (text) => /^\s*undo\W*$/i.test(text);
+
+async function handleText(event) {
+  const { mid, senderId } = event;
+  if (!isUndo(event.text)) {
+    console.log(`text mid=${mid} sender=${senderId} not a command, sending help`);
+    await send(mid, senderId, replies.HELP).catch(() => {});
+    return;
+  }
+  const share = await db.shareToUndo(senderId, event.replyToMid);
+  if (!share || share.status === "undone") {
+    console.log(`text mid=${mid} sender=${senderId} undo found ${share ? "an already undone share" : "nothing"}`);
+    await send(mid, senderId, replies.undoReply(share, [])).catch(() => {});
+    return;
+  }
+  const events = share.event_ids || [];
+  try {
+    await deleteEvents(events.map((e) => e.id));
+  } catch (err) {
+    log(share.mid, `undo failed: ${err.message}`);
+    await send(mid, senderId, "Sorry, I couldn't remove those events just now. Try undo again in a few minutes.").catch(() => {});
+    return;
+  }
+  await db.setStatus(share.mid, "undone", share.failure_reason);
+  await send(mid, senderId, events.length ? replies.undoReply(share, events) : replies.undoReply(null, [])).catch(() => {});
 }
 
 async function fetchStage(share) {
@@ -50,7 +117,7 @@ async function extractStage(share) {
   // Earlier problems (e.g. a failed fetch) stay on the row so the reply can mention them.
   const problems = share.failure_reason ? share.failure_reason.split(",") : [];
   const { extraction, reason } = await runExtraction(share);
-  if (reason) await db.setStatus(share.mid, "failed", [...problems, reason].join(","));
+  if (reason) await fail(share, reason);
   else await db.setStatus(share.mid, "extracted", problems.join(",") || null, { extraction });
   return db.getShare(share.mid);
 }
@@ -58,7 +125,7 @@ async function extractStage(share) {
 async function calendarStage(share) {
   const problems = share.failure_reason ? share.failure_reason.split(",") : [];
   const { events, reason } = await runCalendar(share);
-  if (reason) await db.setStatus(share.mid, "failed", [...problems, reason].join(","));
+  if (reason) await fail(share, reason);
   else await db.setStatus(share.mid, "calendared", problems.join(",") || null, { event_ids: events });
   return db.getShare(share.mid);
 }
@@ -67,7 +134,7 @@ async function calendarStage(share) {
 async function runCalendar(share, deps = { writeEvents, today: todayIso() }) {
   const { mid } = share;
   const entries = share.extraction.items
-    .map((item) => ({ item, entry: freshEntry(item, deps.today) }))
+    .map((item, index) => ({ item, index, entry: freshEntry(item, deps.today) }))
     .filter(({ entry }) => entry);
   const skipped = share.extraction.items.filter((item) => item.calendar).length - entries.length;
   if (skipped) log(mid, `calendar skipped ${skipped} entr${skipped === 1 ? "y" : "ies"} no longer valid`);
@@ -187,4 +254,4 @@ async function requeueInProgress() {
   console.log(`requeued ${mids.length} in-progress share(s)`);
 }
 
-module.exports = { receiveReel, requeueInProgress, buildBundle, runExtraction, runCalendar };
+module.exports = { receiveReel, receiveText, requeueInProgress, buildBundle, runExtraction, runCalendar, isUndo };

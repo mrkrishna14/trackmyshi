@@ -40,8 +40,9 @@ test("parseEvents extracts the reel from the real payload shape", () => {
 
 test("parseEvents returns text messages as kind text", () => {
   assert.deepEqual(parseEvents(messaging({ mid: "m1", text: "undo" })), [
-    { kind: "text", mid: "m1", senderId: "111", text: "undo" },
+    { kind: "text", mid: "m1", senderId: "111", text: "undo", replyToMid: null },
   ]);
+  assert.equal(parseEvents(messaging({ mid: "m2", text: "undo", reply_to: { mid: "bot-reply" } }))[0].replyToMid, "bot-reply");
 });
 
 test("parseEvents drops echoes, deletions, reads, reactions and non-reel attachments", () => {

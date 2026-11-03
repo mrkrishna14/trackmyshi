@@ -21,3 +21,13 @@ ALTER TABLE shares ADD COLUMN IF NOT EXISTS bundle jsonb;
 
 -- Module 3: the verified opportunities (deadline, link, sources) found for the reel.
 ALTER TABLE shares ADD COLUMN IF NOT EXISTS extraction jsonb;
+
+-- Module 5: the bot's reply message id, so "undo" sent as a reply to it finds the right share.
+ALTER TABLE shares ADD COLUMN IF NOT EXISTS reply_mid text;
+
+-- Module 5: text messages seen, so a redelivered "undo" never undoes a second share.
+CREATE TABLE IF NOT EXISTS texts (
+  mid text PRIMARY KEY,
+  sender_id text NOT NULL,
+  received_at timestamptz NOT NULL DEFAULT now()
+);

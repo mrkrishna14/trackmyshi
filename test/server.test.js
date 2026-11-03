@@ -38,7 +38,7 @@ test.describe("server", { skip: SKIP_DB }, () => {
   test.before(async () => {
     pool = new Pool({ connectionString: testDatabaseUrl() });
     // Simulate rows left behind by a process killed mid-job, plus rows that must not be retried.
-    await pool.query("DROP TABLE IF EXISTS shares");
+    await pool.query("DROP TABLE IF EXISTS shares, texts");
     await pool.query(require("fs").readFileSync(path.join(__dirname, "..", "schema.sql"), "utf8"));
     await pool.query(`INSERT INTO shares (mid, sender_id, reel_url, status, received_at) VALUES
       ('left-behind', 's', 'u', 'fetched', now()),
@@ -125,9 +125,15 @@ test.describe("server", { skip: SKIP_DB }, () => {
     const echo = JSON.stringify({ entry: [{ messaging: [{ sender: { id: "9" }, message: { mid: "x2", is_echo: true, text: "hi" } }] }] });
     assert.equal((await post(echo)).status, 200);
 
-    const text = JSON.stringify({ entry: [{ messaging: [{ sender: { id: "9" }, message: { mid: "x3", text: "undo" } }] }] });
-    assert.equal((await post(text)).status, 200);
-    await waitForLog("webhook ignored kind=text mid=x3");
+    const undo = JSON.stringify({ entry: [{ messaging: [{ sender: { id: "9" }, message: { mid: "x3", text: "undo" } }] }] });
+    assert.equal((await post(undo)).status, 200);
+    await waitForLog("text mid=x3 sender=9 undo found nothing");
+    assert.equal((await post(undo)).status, 200);
+    await waitForLog("text mid=x3 duplicate delivery ignored");
+
+    const hello = JSON.stringify({ entry: [{ messaging: [{ sender: { id: "9" }, message: { mid: "x4", text: "hey what is this" } }] }] });
+    assert.equal((await post(hello)).status, 200);
+    await waitForLog("text mid=x4 sender=9 not a command, sending help");
 
     const empty = await fetch(`${base}/webhook`, { method: "POST" });
     assert.equal(empty.status, 200);

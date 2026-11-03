@@ -160,3 +160,9 @@ test.describe("runCalendar", () => {
     assert.deepEqual(result, { reason: "google_reauth_needed" });
   });
 });
+
+test("isUndo accepts undo however it's typed, and nothing else", () => {
+  const { isUndo } = require("../src/pipeline");
+  for (const t of ["undo", "Undo", " UNDO! ", "undo."]) assert.ok(isUndo(t), t);
+  for (const t of ["undo the last two", "please undo", "hi", ""]) assert.ok(!isUndo(t), t);
+});

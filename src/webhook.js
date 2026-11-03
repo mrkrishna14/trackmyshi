@@ -28,7 +28,13 @@ function parseEvents(body) {
           caption: reel.payload.title || "",
         });
       } else if (typeof message.text === "string") {
-        events.push({ kind: "text", mid: message.mid, senderId: String(senderId), text: message.text });
+        events.push({
+          kind: "text",
+          mid: message.mid,
+          senderId: String(senderId),
+          text: message.text,
+          replyToMid: message.reply_to?.mid || null,
+        });
       }
     }
   }
