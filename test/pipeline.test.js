@@ -91,38 +91,55 @@ const { ExtractionError } = require("../src/extract");
 
 test.describe("runExtraction", () => {
   const fetchedShare = { mid: "m2", bundle: { caption: "cap", uploadDate: "2026-10-23" }, received_at: new Date("2026-10-30T12:00:00Z") };
-  const usage = { input_tokens: 1, output_tokens: 1, web_searches: 1, requests: 1 };
+  const usage = (n) => ({ input_tokens: n, output_tokens: n, web_searches: n, requests: 1 });
+  const opp = (company) => ({ company, program: "Intern", reel_cycle: null, creator_deadline_date: null, creator_deadline_quote: null, creator_deadline_source: null, program_dates: null });
+  const passThrough = async (result, bundle, ctx) => ({ items: result.items.map((i) => ({ ...i, claimed: i })), none_reason: result.noneReason, usage: result.usage, ctx, evidence: result });
 
-  test("passes today and the reel's post date to the checks", async () => {
-    let seen;
+  test("searches each opportunity separately, at most three at once, and merges the results in order", async () => {
+    let active = 0;
+    let peak = 0;
     const { extraction } = await runExtraction(fetchedShare, {
       today: "2026-11-01",
-      extract: async () => ({ items: [], noneReason: "no opportunity", usage }),
-      verifyExtraction: async (result, bundle, ctx) => ((seen = ctx), { items: [], none_reason: result.noneReason, usage }),
+      identify: async () => ({ opportunities: ["A", "B", "C", "D", "E"].map(opp), noneReason: null, usage: usage(1) }),
+      findPosting: async (o) => {
+        active++;
+        peak = Math.max(peak, active);
+        await new Promise((r) => setTimeout(r, 5));
+        active--;
+        if (o.company === "C") throw new ExtractionError("extraction_failed", "529");
+        return { posting: { application_url: `https://${o.company.toLowerCase()}.com/x`, posting_status: "open" }, toolText: `[${o.company}]`, pageTexts: { [o.company]: "page" }, usage: usage(10) };
+      },
+      verifyExtraction: passThrough,
     });
-    assert.deepEqual(seen, { today: "2026-11-01", reference: "2026-10-23" });
-    assert.equal(extraction.none_reason, "no opportunity");
+    assert.equal(peak, 3);
+    assert.deepEqual(extraction.items.map((i) => i.company), ["A", "B", "C", "D", "E"]);
+    assert.equal(extraction.items[0].application_url, "https://a.com/x");
+    assert.equal(extraction.items[2].application_url, null, "a failed search keeps the opportunity without a link");
+    assert.equal(extraction.items[2].search_failed, true);
+    assert.deepEqual(extraction.usage, { input_tokens: 41, output_tokens: 41, web_searches: 41, requests: 5 });
+    assert.deepEqual(Object.keys(extraction.evidence.pageTexts).sort(), ["A", "B", "D", "E"]);
+    assert.deepEqual(extraction.ctx, { today: "2026-11-01", reference: "2026-10-23" });
   });
 
   test("falls back to the received date when the post date is unknown", async () => {
-    let seen;
-    await runExtraction({ ...fetchedShare, bundle: { caption: "cap", uploadDate: null } }, {
+    const { extraction } = await runExtraction({ ...fetchedShare, bundle: { caption: "cap", uploadDate: null } }, {
       today: "2026-11-01",
-      extract: async () => ({ items: [], noneReason: null, usage }),
-      verifyExtraction: async (r, b, ctx) => ((seen = ctx), { items: [], none_reason: null, usage }),
+      identify: async () => ({ opportunities: [], noneReason: "nothing", usage: usage(1) }),
+      findPosting: async () => assert.fail("no opportunities, no searches"),
+      verifyExtraction: passThrough,
     });
-    assert.equal(seen.reference, "2026-10-30");
+    assert.equal(extraction.ctx.reference, "2026-10-30");
+    assert.equal(extraction.none_reason, "nothing");
   });
 
-  test("an agent failure becomes its reason, without running the checks", async () => {
-    let checked = false;
+  test("a failure to read the reel becomes its reason, without searching or checking", async () => {
     const result = await runExtraction(fetchedShare, {
       today: "2026-11-01",
-      extract: async () => { throw new ExtractionError("extraction_invalid", "no result"); },
-      verifyExtraction: async () => ((checked = true), {}),
+      identify: async () => { throw new ExtractionError("extraction_invalid", "not JSON"); },
+      findPosting: async () => assert.fail("should not search"),
+      verifyExtraction: async () => assert.fail("should not check"),
     });
     assert.deepEqual(result, { reason: "extraction_invalid" });
-    assert.equal(checked, false);
   });
 });
 

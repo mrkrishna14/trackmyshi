@@ -1,6 +1,9 @@
 // Deterministic checks on the agent's answer. A date is calendared only when a quote that really
 // appears in its source states it explicitly, and it is in the future. A link is kept only when
 // it came from a search/fetch result or the reel itself and the page still exists.
+const { classify, trusted } = require("./sources");
+const postings = require("./postings");
+
 const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
 
 function normalize(text) {
@@ -141,18 +144,39 @@ async function checkUrl(url) {
   }
 }
 
+// The best link that is real: official or application-system pages first, then a job site as a
+// labelled last resort. Hosts of unknown standing are never sent. Each candidate must have come
+// from a search/fetch result or the reel itself, and still exist.
 async function pickLink(item, bundle, toolText) {
   const candidates = [item.application_url, item.official_url, ...urlsIn(bundle.caption), ...urlsIn(bundleSource(bundle, "ocr"))];
   const tried = new Set();
+  let fallback = null;
   for (const url of candidates) {
     if (!url || tried.has(url) || !/^https?:\/\//.test(url)) continue;
     tried.add(url);
+    const kind = classify(url, item.company);
+    if (kind === "unknown" || (kind === "job_site" && fallback)) continue;
+    // A page whose own address says it's closed is never worth sending.
+    if (closedByUrl(url)) continue;
     const source = urlSource(url, bundle, toolText);
     if (!source) continue;
     const check = await checkUrl(url);
-    if (check.ok) return { url, source, http: check.status };
+    if (!check.ok) continue;
+    const link = { url, source, kind, http: check.status };
+    if (trusted(kind)) return link;
+    fallback = link;
   }
-  return null;
+  return fallback;
+}
+
+// Whether the linked posting is taking applications. The application system's own API decides
+// when it has one; otherwise the agent must have seen it open, with nothing on the page or in
+// the address saying it closed.
+async function postingOpen(link, claimedStatus, pageText) {
+  if (!link || !trusted(link.kind)) return false;
+  const api = await postings.check(link.url);
+  if (api) return api.open;
+  return claimedStatus === "open" && !closedByUrl(link.url) && !postings.CLOSED_TEXT.test(pageText || "");
 }
 
 // Page text for quote checks: what the agent fetched, or else a plain fetch of the page.
@@ -214,12 +238,13 @@ const closedByUrl = (url) => /(^|[/_-])closed([/_-]|$)/i.test(new URL(url).pathn
 
 // What module 4 writes to the calendar: the verified deadline, a reminder, or nothing.
 // A reminder says "this is open, apply soon", so it needs all of: no date anywhere (an
-// unconfirmed, conflicting or passed date could fall before the reminder), a link to a specific
-// posting the agent saw open, and a season that hasn't ended (old reels advertise past cycles).
+// unconfirmed, conflicting or passed date could fall before the reminder), an official or
+// application-system link to a specific posting confirmed open, and a season that hasn't ended
+// (old reels advertise past cycles).
 function calendarEntry(date, link, today, cycle, postingStatus) {
   if (date.deadline) return { kind: "deadline", ...date.deadline };
   if (date.status !== "none" || !link || postingStatus !== "open") return null;
-  if (!isSpecificPosting(link.url) || closedByUrl(link.url)) return null;
+  if (!trusted(link.kind) || !isSpecificPosting(link.url) || closedByUrl(link.url)) return null;
   const end = cycleEnd(cycle);
   if (end && end < today) return null;
   return { kind: "reminder", date: addDays(today, REMINDER_DAYS), time: null, timezone: null };
@@ -246,9 +271,13 @@ function freshEntry(item, today) {
 async function verifyExtraction(result, bundle, { today, reference }) {
   const items = [];
   for (const raw of result.items) {
-    const officialText = await officialPageText(raw.official_url, result.pageTexts);
+    // Only an official or application-system page can be the "official" date source.
+    const officialText = raw.official_url && trusted(classify(raw.official_url, raw.company))
+      ? await officialPageText(raw.official_url, result.pageTexts)
+      : "";
     const date = decideDate(raw, { bundle, officialText, today, reference });
     const link = await pickLink(raw, bundle, result.toolText);
+    const open = await postingOpen(link, raw.posting_status, link && (result.pageTexts[link.url] || (link.url === raw.official_url ? officialText : "")));
     const end = cycleEnd(raw.cycle || raw.program);
     if (!date.deadline && end && end < today) date.note = `posting is for ${raw.cycle || raw.program}, which has ended`;
     items.push({
@@ -264,8 +293,8 @@ async function verifyExtraction(result, bundle, { today, reference }) {
       // The reel advertised a season that has ended and the agent found a current posting instead,
       // so the reply and the event can say "updated from an older reel".
       updated_from: reelCycleEnded(raw, today) ? raw.reel_cycle : null,
-      posting_status: raw.posting_status,
-      calendar: calendarEntry(date, link, today, raw.cycle || raw.program, raw.posting_status),
+      posting_status: open ? "open" : raw.posting_status === "open" ? "unconfirmed" : raw.posting_status,
+      calendar: calendarEntry(date, link, today, raw.cycle || raw.program, open ? "open" : "not_open"),
       claimed: raw,
     });
   }

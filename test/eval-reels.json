@@ -1,0 +1,79 @@
+{
+  "about": "Ground truth for scripts/eval.js. links are accepted URL prefixes for the correct official page; deadline is the true application deadline (null if none is published). 'confirmed' is whether the user has checked the entry.",
+  "reels": [
+    {
+      "url": "https://www.instagram.com/reel/De2uJ0aP1zu/",
+      "note": "Jake's reel: Jane Street FOCUS, deadline said in the audio",
+      "confirmed": true,
+      "expect": [
+        {
+          "company": "Jane Street",
+          "program": "FOCUS",
+          "links": [
+            "https://www.janestreet.com/join-jane-street/programs-and-events/focus",
+            "https://www.janestreet.com/apply-focus"
+          ],
+          "deadline": "2026-11-15"
+        }
+      ]
+    },
+    {
+      "url": "https://www.instagram.com/reel/DNYw0V7B9aY/",
+      "note": "Six-company list from the Summer 2026 cycle; the right answer is each company's current (2027) posting",
+      "confirmed": false,
+      "expect": [
+        {
+          "company": "Wells Fargo",
+          "links": [
+            "https://www.wellsfargojobs.com/",
+            "https://wf.wd1.myworkdayjobs.com/"
+          ],
+          "deadline": null
+        },
+        {
+          "company": "Microsoft",
+          "links": [
+            "https://jobs.careers.microsoft.com/",
+            "https://apply.careers.microsoft.com/careers/job/"
+          ],
+          "deadline": null
+        },
+        {
+          "company": "Jane Street",
+          "links": [
+            "https://www.janestreet.com/join-jane-street/position/",
+            "https://job-boards.greenhouse.io/janestreet/jobs/",
+            "https://boards.greenhouse.io/janestreet/jobs/",
+            "https://www.janestreet.com/join-jane-street/apply/"
+          ],
+          "deadline": null
+        },
+        {
+          "company": "McKinsey",
+          "links": [
+            "https://www.mckinsey.com/careers"
+          ],
+          "deadline": null,
+          "none_ok": true,
+          "note": "US Business Analyst Intern applications open around January; no current US posting in November 2026"
+        },
+        {
+          "company": "BlackRock",
+          "links": [
+            "https://careers.blackrock.com/job/",
+            "https://blackrock.tal.net/"
+          ],
+          "deadline": null
+        },
+        {
+          "company": "TikTok",
+          "links": [
+            "https://lifeattiktok.com/search/",
+            "https://careers.tiktok.com/"
+          ],
+          "deadline": null
+        }
+      ]
+    }
+  ]
+}

@@ -7,7 +7,7 @@ const { fetchReel } = require("./fetchReel");
 const media = require("./media");
 const { transcribe } = require("./transcribe");
 const { ocr } = require("./ocr");
-const { extract } = require("./extract");
+const { identify, findPosting } = require("./extract");
 const { verifyExtraction, freshEntry } = require("./verify");
 const { writeEvents, deleteEvents } = require("./calendar");
 const { sendText } = require("./instagram");
@@ -161,22 +161,78 @@ async function runCalendar(share, deps = { writeEvents, today: todayIso() }) {
 // "Today" in the westernmost US timezone, so a deadline later today still counts as upcoming.
 const todayIso = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date());
 
-// Runs the agent, then the code checks. Returns { extraction } or { reason } for a failure.
-// `deps` is a parameter so tests can replace the vendor and the checks.
-async function runExtraction(share, deps = { extract, verifyExtraction, today: todayIso() }) {
+// A posting search that failed or found nothing: the opportunity is still reported, linkless.
+const NO_POSTING = {
+  application_url: null, official_url: null, official_deadline_date: null, official_deadline_quote: null,
+  deadline_time: null, deadline_timezone: null, cycle: null, posting_status: "unknown",
+};
+const FIND_CONCURRENCY = 3;
+
+// Runs fn over items with at most `limit` in flight, keeping order.
+async function mapLimit(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+const addUsage = (a, b) => ({
+  input_tokens: a.input_tokens + b.input_tokens,
+  output_tokens: a.output_tokens + b.output_tokens,
+  web_searches: a.web_searches + b.web_searches,
+  requests: a.requests + b.requests,
+});
+
+// Reads the reel once for its opportunities, then searches for each one's posting in parallel,
+// then runs the code checks. Returns { extraction } or { reason } for a failure. A failed
+// search loses only that opportunity's link. `deps` is a parameter so tests (and the eval
+// script) can replace the vendor and the checks.
+async function runExtraction(share, deps = { identify, findPosting, verifyExtraction, today: todayIso() }) {
   const { mid, bundle } = share;
   const today = deps.today;
   // Years missing from a quote are read relative to when the reel was posted.
   const reference = bundle.uploadDate || share.received_at.toISOString().slice(0, 10);
   const start = Date.now();
-  let result;
+  let found;
   try {
-    result = await deps.extract(bundle, { today });
+    found = await deps.identify(bundle, { today });
   } catch (err) {
     log(mid, `extraction failed in ${seconds(start)}: ${err.message}`);
     return { reason: err.reason || "extraction_failed" };
   }
-  const { input_tokens, output_tokens, web_searches, requests } = result.usage;
+  log(mid, `identified ${found.opportunities.length} opportunit${found.opportunities.length === 1 ? "y" : "ies"} in ${seconds(start)}`);
+
+  let usage = found.usage;
+  const pageTexts = {};
+  const toolTexts = [];
+  const searches = await mapLimit(found.opportunities, FIND_CONCURRENCY, async (opportunity, i) => {
+    const begin = Date.now();
+    try {
+      const result = await deps.findPosting(opportunity, bundle, { today });
+      usage = addUsage(usage, result.usage);
+      Object.assign(pageTexts, result.pageTexts);
+      toolTexts.push(result.toolText);
+      log(mid, `item ${i} search took ${seconds(begin)}: ${result.usage.web_searches} search(es), in=${result.usage.input_tokens} out=${result.usage.output_tokens} tokens`);
+      return result.posting;
+    } catch (err) {
+      log(mid, `item ${i} search failed in ${seconds(begin)}: ${err.message}`);
+      return { ...NO_POSTING, search_failed: true };
+    }
+  });
+  const result = {
+    items: found.opportunities.map((opportunity, i) => ({ ...opportunity, ...searches[i] })),
+    noneReason: found.noneReason,
+    toolText: toolTexts.join("\n"),
+    pageTexts,
+    usage,
+  };
+  const { input_tokens, output_tokens, web_searches, requests } = usage;
   log(mid, `extraction ran in ${seconds(start)}: ${requests} request(s), ${web_searches} search(es), in=${input_tokens} out=${output_tokens} tokens`);
 
   const extraction = await deps.verifyExtraction(result, bundle, { today, reference });
@@ -184,8 +240,8 @@ async function runExtraction(share, deps = { extract, verifyExtraction, today: t
   for (const [i, item] of extraction.items.entries()) {
     const entry = item.calendar;
     const date = entry ? `${entry.kind} ${entry.date}${entry.time ? ` ${entry.time} ${entry.timezone}` : ""}` : "none";
-    const link = item.link ? `${item.link.source} ${item.link.url}` : "none";
-    log(mid, `item ${i} ${item.company} / ${item.program}: date=${date} (${item.date_status}${item.note ? `: ${item.note}` : ""}) link=${link}`);
+    const link = item.link ? `${item.link.kind}/${item.link.source} ${item.link.url}` : "none";
+    log(mid, `item ${i} ${item.company} / ${item.program}: date=${date} (${item.date_status}${item.note ? `: ${item.note}` : ""}) posting=${item.posting_status} link=${link}`);
     // The evidence behind the date, so every calendared date can be audited from the logs.
     const c = item.claimed;
     log(mid, `item ${i} evidence: official=${c.official_url} quote=${JSON.stringify(c.official_deadline_quote)} creator(${c.creator_deadline_source})=${JSON.stringify(c.creator_deadline_quote)}`);

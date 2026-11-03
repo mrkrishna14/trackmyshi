@@ -150,7 +150,7 @@ test.describe("pickLink", () => {
 
   test("keeps a URL the agent found in search results when the page exists", async () => {
     statusFor({});
-    assert.deepEqual(await pickLink(item({ application_url: official }), bundle, toolText), { url: official, source: "web", http: 200 });
+    assert.deepEqual(await pickLink(item({ application_url: official }), bundle, toolText), { url: official, source: "web", kind: "official", http: 200 });
   });
 
   test("drops a URL the agent never saw, even if it resolves", async () => {
@@ -165,6 +165,13 @@ test.describe("pickLink", () => {
     assert.equal(link.url, official);
   });
 
+  test("a page whose address says it's closed is skipped for the next candidate", async () => {
+    statusFor({});
+    const closed = "https://www.janestreet.com/join-jane-street/closed-internship/strategy-and-product-may-august-nyc/";
+    const link = await pickLink(item({ application_url: closed }), bundle, JSON.stringify([closed, official]));
+    assert.equal(link.url, official);
+  });
+
   test("a bot-blocked page still counts as existing", async () => {
     statusFor({ [official]: 403 });
     assert.equal((await pickLink(item({ application_url: official }), bundle, toolText)).http, 403);
@@ -172,15 +179,24 @@ test.describe("pickLink", () => {
 
   test("a URL written in the caption is named as coming from the caption", async () => {
     statusFor({});
-    const withUrl = { ...bundle, caption: "apply here: https://jobs.example.com/focus." };
+    const withUrl = { ...bundle, caption: "apply here: https://janestreet.com/focus." };
     const link = await pickLink(item({ official_url: null }), withUrl, "[]");
-    assert.deepEqual(link, { url: "https://jobs.example.com/focus", source: "caption", http: 200 });
+    assert.deepEqual(link, { url: "https://janestreet.com/focus", source: "caption", kind: "official", http: 200 });
+  });
+
+  test("official pages beat job sites; a job site is kept only as a labelled fallback; unknown hosts never", async () => {
+    statusFor({});
+    const jobSite = "https://builtin.com/job/jane-street-focus/1";
+    const seen = JSON.stringify([jobSite, official, "https://randomblog.example/focus"]);
+    assert.equal((await pickLink(item({ application_url: jobSite }), bundle, seen)).url, official);
+    assert.deepEqual(await pickLink(item({ application_url: jobSite, official_url: null }), bundle, seen), { url: jobSite, source: "web", kind: "job_site", http: 200 });
+    assert.equal(await pickLink(item({ application_url: "https://randomblog.example/focus", official_url: null }), bundle, seen), null);
   });
 });
 
 test.describe("calendarEntry", () => {
   const { calendarEntry } = require("../src/verify");
-  const link = { url: "https://careers.microsoft.com/pm-intern", source: "web", http: 200 };
+  const link = { url: "https://careers.microsoft.com/pm-intern", source: "web", kind: "official", http: 200 };
   const reminderFor = (l, status = "open", cycle = "Summer 2027") => calendarEntry({ status: "none", deadline: null }, l, today, cycle, status);
 
   test("a verified deadline is calendared as a deadline", () => {
@@ -204,7 +220,8 @@ test.describe("calendarEntry", () => {
     assert.equal(reminderFor(link, "unknown"), null);
     assert.equal(reminderFor({ ...link, url: "https://apply.careers.microsoft.com/" }), null);
     assert.equal(reminderFor({ ...link, url: "https://www.janestreet.com/join-jane-street/closed-internship/strategy-and-product-may-august-nyc/" }), null);
-    assert.equal(reminderFor({ ...link, url: "https://blackrock.tal.net/vx/candidate/so/pm/1/pl/1/opp/11986?instant=apply" }).kind, "reminder");
+    assert.equal(reminderFor({ ...link, url: "https://blackrock.tal.net/vx/candidate/so/pm/1/pl/1/opp/11986?instant=apply", kind: "ats" }).kind, "reminder");
+    assert.equal(reminderFor({ ...link, url: "https://builtin.com/job/x/1", kind: "job_site" }), null, "job sites never get a reminder");
   });
 
   test("a posting for a season that has ended gets no reminder", () => {
