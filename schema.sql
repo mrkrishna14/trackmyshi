@@ -31,3 +31,6 @@ CREATE TABLE IF NOT EXISTS texts (
   sender_id text NOT NULL,
   received_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- One DM per opportunity: [{index, reply_mid}], so "undo" sent as a reply removes just that one.
+ALTER TABLE shares ADD COLUMN IF NOT EXISTS replies jsonb;

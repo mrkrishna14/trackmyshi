@@ -36,7 +36,7 @@ async function insertShare({ mid, senderId, reelUrl, caption }) {
 }
 
 // Stage results that are saved together with the status change that produced them.
-const RESULT_COLUMNS = { bundle: "json", extraction: "json", event_ids: "json", reply_mid: "text" };
+const RESULT_COLUMNS = { bundle: "json", extraction: "json", event_ids: "json", replies: "json", reply_mid: "text" };
 
 async function setStatus(mid, status, failureReason = null, results = {}) {
   const sets = ["status = $2", "failure_reason = $3"];
@@ -59,12 +59,18 @@ async function getShare(mid) {
   return rows[0];
 }
 
-// The Send API only allows replies within 24h of the user's message, so older work is abandoned.
+// A reply that arrives long after the share is confusing, so after a restart only shares from
+// the last 30 minutes are resumed. Older unfinished ones are closed without a DM.
 async function inProgressMids() {
+  const { rows: abandoned } = await pool.query(
+    `UPDATE shares SET status = 'failed', failure_reason = concat_ws(',', failure_reason, 'abandoned_after_restart')
+     WHERE status = ANY($1) AND received_at <= now() - interval '30 minutes'
+     RETURNING mid, sender_id`,
+    [IN_PROGRESS]
+  );
+  for (const row of abandoned) logShare(row.mid, row.sender_id, "failed", "abandoned_after_restart");
   const { rows } = await pool.query(
-    `SELECT mid FROM shares
-     WHERE status = ANY($1) AND received_at > now() - interval '24 hours'
-     ORDER BY received_at`,
+    "SELECT mid FROM shares WHERE status = ANY($1) ORDER BY received_at",
     [IN_PROGRESS]
   );
   return rows.map((row) => row.mid);
@@ -79,20 +85,27 @@ async function insertText(mid, senderId) {
   return rowCount === 1;
 }
 
-// The share an "undo" means: the one whose reply (or own message) it answers, else the
-// sender's most recent replied share that put something on the calendar.
+// What an "undo" means: { share, index }. Sent as a reply, it's the opportunity whose message
+// it answers (index), or a whole share when it answers the share itself or an older single
+// reply (index null). Sent plainly, it's every event of the sender's latest share that still
+// has any. Returns null when nothing matches.
 async function shareToUndo(senderId, replyToMid) {
   if (replyToMid) {
     const key = messageKey(replyToMid);
     const { rows } = await pool.query("SELECT * FROM shares WHERE sender_id = $1 ORDER BY received_at DESC LIMIT 200", [senderId]);
-    return rows.find((row) => messageKey(row.reply_mid) === key || messageKey(row.mid) === key);
+    for (const row of rows) {
+      const reply = (row.replies || []).find((r) => messageKey(r.reply_mid) === key);
+      if (reply) return { share: row, index: reply.index };
+      if (messageKey(row.reply_mid) === key || messageKey(row.mid) === key) return { share: row, index: null };
+    }
+    return null;
   }
   const { rows } = await pool.query(
     `SELECT * FROM shares WHERE sender_id = $1 AND status = 'replied' AND jsonb_array_length(event_ids) > 0
      ORDER BY received_at DESC LIMIT 1`,
     [senderId]
   );
-  return rows[0];
+  return rows[0] ? { share: rows[0], index: null } : null;
 }
 
 module.exports = { pool, init, insertShare, setStatus, getShare, inProgressMids, insertText, shareToUndo };

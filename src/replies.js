@@ -1,6 +1,7 @@
 // Every DM the bot sends. Pure functions from share rows to text, kept under Instagram's
-// 1000-character limit.
+// 1000-character limit. A share gets one message per opportunity, so each can be undone alone.
 const MAX_LENGTH = 1000;
+const MAX_OPPORTUNITIES = 8;
 
 const FETCH_PROBLEMS = ["reel_private_or_deleted", "fetch_login_required", "fetch_failed"];
 const PARTIAL_PROBLEMS = ["transcribe_failed", "ocr_failed"];
@@ -24,7 +25,11 @@ function formatTime(time, timeZone, date) {
 
 function itemText(item, event) {
   const name = `${item.company} ${item.program}`.trim();
-  const apply = item.link ? `\nApply: ${item.link.url}` : "";
+  const apply = !item.link
+    ? ""
+    : item.link.kind === "job_site"
+      ? `\nLink (not the official page, so double-check before applying): ${item.link.url}`
+      : `\nApply: ${item.link.url}`;
   const updated = item.updated_from ? ` This reel was about ${item.updated_from}, which has ended, so this is this year's posting.` : "";
 
   if (event?.kind === "deadline") {
@@ -46,16 +51,6 @@ function itemText(item, event) {
   return `${name}: I couldn't find the application page or a deadline.`;
 }
 
-// Joins parts, dropping items from the end with "...and N more" until it fits.
-function fit(header, items, footer) {
-  for (let shown = items.length; shown >= 0; shown--) {
-    const more = shown < items.length ? [`…and ${items.length - shown} more.`] : [];
-    const text = [header, ...items.slice(0, shown), ...more, footer].filter(Boolean).join("\n\n");
-    if (text.length <= MAX_LENGTH) return text;
-  }
-  return [header, footer].filter(Boolean).join("\n\n").slice(0, MAX_LENGTH);
-}
-
 // Events record which item they came from; rows calendared before that existed are matched
 // by kind, date and company instead.
 function eventFor(events, item, index) {
@@ -65,19 +60,32 @@ function eventFor(events, item, index) {
   );
 }
 
-function shareReply(share) {
+const clip = (text) => (text.length <= MAX_LENGTH ? text : `${text.slice(0, MAX_LENGTH - 1)}…`);
+
+// [{ index, text }] in sending order. index is the opportunity a message is about (null for
+// the opening note), which is how "undo" sent as a reply finds the right event.
+function shareReplies(share) {
   const problems = share.failure_reason ? share.failure_reason.split(",") : [];
-  let header = null;
-  if (problems.some((p) => FETCH_PROBLEMS.includes(p))) header = "I couldn't open the video, so I only read the caption.";
-  else if (problems.some((p) => PARTIAL_PROBLEMS.includes(p))) header = "I couldn't read all of the video, so I may have missed details.";
+  let note = null;
+  if (problems.some((p) => FETCH_PROBLEMS.includes(p))) note = "I couldn't open the video, so I only read the caption.";
+  else if (problems.some((p) => PARTIAL_PROBLEMS.includes(p))) note = "I couldn't read all of the video, so I may have missed details.";
 
   const items = share.extraction?.items || [];
   if (items.length === 0) {
-    return fit(header, ["I didn't find an internship, job or program with a deadline in this reel."], null);
+    const none = "I didn't find an internship, job or program with a deadline in this reel.";
+    return [{ index: null, text: note ? `${note} ${none}` : none }];
   }
   const events = share.event_ids || [];
-  const texts = items.map((item, i) => itemText(item, eventFor(events, item, i)));
-  return fit(header, texts, events.length > 0 ? "Reply undo to remove what I added." : null);
+  const messages = note ? [{ index: null, text: note }] : [];
+  for (const [index, item] of items.slice(0, MAX_OPPORTUNITIES).entries()) {
+    const event = eventFor(events, item, index);
+    const undo = event ? "\n\nReply undo to this message to remove it." : "";
+    messages.push({ index, text: clip(itemText(item, event) + undo) });
+  }
+  if (items.length > MAX_OPPORTUNITIES) {
+    messages.push({ index: null, text: `…and ${items.length - MAX_OPPORTUNITIES} more in this reel that I didn't list.` });
+  }
+  return messages;
 }
 
 function failureReply(reason) {
@@ -87,8 +95,8 @@ function failureReply(reason) {
 
 function undoReply(share, removed) {
   if (!share) return "There's nothing to undo.";
-  if (share.status === "undone") return "I already removed that one.";
+  if (removed.length === 0) return "There's nothing to undo for that one.";
   return `Removed from your calendar: ${removed.map((e) => e.summary.replace(/^(Deadline|Apply soon): /, "")).join(", ")}.`;
 }
 
-module.exports = { shareReply, failureReply, undoReply, HELP, formatDate, formatTime };
+module.exports = { shareReplies, failureReply, undoReply, HELP, formatDate, formatTime };

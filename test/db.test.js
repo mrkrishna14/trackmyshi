@@ -55,7 +55,7 @@ test.describe("db", { skip: SKIP_DB }, () => {
     assert.deepEqual(row.bundle, bundle);
   });
 
-  test("inProgressMids returns unfinished shares from the last 24h only", async () => {
+  test("inProgressMids resumes unfinished shares from the last 30 minutes and closes older ones", async () => {
     await db.insertShare({ ...share, mid: "fresh" });
     await db.insertShare({ ...share, mid: "midway" });
     await db.setStatus("midway", "extracted");
@@ -64,9 +64,13 @@ test.describe("db", { skip: SKIP_DB }, () => {
     await db.insertShare({ ...share, mid: "dead" });
     await db.setStatus("dead", "failed", "x");
     await db.insertShare({ ...share, mid: "stale" });
-    await db.pool.query("UPDATE shares SET received_at = now() - interval '25 hours' WHERE mid = 'stale'");
+    await db.setStatus("stale", "calendared", "ocr_failed");
+    await db.pool.query("UPDATE shares SET received_at = now() - interval '31 minutes' WHERE mid = 'stale'");
 
     assert.deepEqual((await db.inProgressMids()).sort(), ["fresh", "midway"]);
+    const stale = await db.getShare("stale");
+    assert.equal(stale.status, "failed");
+    assert.equal(stale.failure_reason, "ocr_failed,abandoned_after_restart");
   });
 
   test("insertText dedupes on mid", async () => {
@@ -74,27 +78,38 @@ test.describe("db", { skip: SKIP_DB }, () => {
     assert.equal(await db.insertText("t1", "s1"), false);
   });
 
-  test("setStatus stores reply_mid as plain text", async () => {
+  test("setStatus stores reply_mid as plain text and replies as JSON", async () => {
     await db.insertShare(share);
-    await db.setStatus("m1", "replied", null, { reply_mid: "bot-reply-1" });
-    assert.equal((await db.getShare("m1")).reply_mid, "bot-reply-1");
+    await db.setStatus("m1", "replied", null, { reply_mid: "bot-reply-1", replies: [{ index: 0, reply_mid: "r0" }] });
+    const row = await db.getShare("m1");
+    assert.equal(row.reply_mid, "bot-reply-1");
+    assert.deepEqual(row.replies, [{ index: 0, reply_mid: "r0" }]);
   });
 
-  test("shareToUndo finds the replied-to share, else the sender's latest share with events", async () => {
-    const event = [{ id: "e", index: 0, kind: "deadline", date: "2026-11-15", summary: "Deadline: X" }];
-    for (const mid of ["old", "new", "empty", "other"]) {
+  test("shareToUndo finds the opportunity whose message was replied to, else the latest share with events", async () => {
+    const events = [
+      { id: "e0", index: 0, kind: "deadline", date: "2026-11-15", summary: "Deadline: X" },
+      { id: "e1", index: 1, kind: "reminder", date: "2026-11-04", summary: "Apply soon: Y" },
+    ];
+    for (const mid of ["old", "new", "empty", "legacy", "other"]) {
       await db.insertShare({ ...share, mid, senderId: mid === "other" ? "s2" : "s1" });
     }
-    await db.pool.query("UPDATE shares SET received_at = now() - interval '1 hour' WHERE mid = 'old'");
-    await db.setStatus("old", "replied", null, { event_ids: event, reply_mid: "reply-old" });
-    await db.setStatus("new", "replied", null, { event_ids: event, reply_mid: "reply-new" });
+    await db.pool.query("UPDATE shares SET received_at = now() - interval '1 hour' WHERE mid IN ('old', 'legacy')");
+    await db.setStatus("old", "replied", null, { event_ids: events, replies: [{ index: 0, reply_mid: "r-old-0" }, { index: 1, reply_mid: "r-old-1" }] });
+    await db.setStatus("new", "replied", null, { event_ids: events, replies: [{ index: 0, reply_mid: "r-new-0" }] });
     await db.setStatus("empty", "replied", null, { event_ids: [] });
-    await db.setStatus("other", "replied", null, { event_ids: event });
+    await db.setStatus("legacy", "replied", null, { event_ids: events, reply_mid: "r-legacy" });
+    await db.setStatus("other", "replied", null, { event_ids: events, replies: [{ index: 0, reply_mid: "r-other" }] });
 
-    assert.equal((await db.shareToUndo("s1", null)).mid, "new", "latest with events, ignoring the one with none");
-    assert.equal((await db.shareToUndo("s1", "reply-old")).mid, "old", "a reply to the bot's message picks that share");
-    assert.equal((await db.shareToUndo("s1", "old")).mid, "old", "a reply to the student's own share works too");
-    assert.equal(await db.shareToUndo("s1", "reply-of-someone-else"), undefined);
-    assert.equal(await db.shareToUndo("s2", "reply-new"), undefined, "never another student's share");
+    const pick = async (reply) => {
+      const t = await db.shareToUndo("s1", reply);
+      return t && [t.share.mid, t.index];
+    };
+    assert.deepEqual(await pick(null), ["new", null], "plain undo: latest share with events");
+    assert.deepEqual(await pick("r-old-1"), ["old", 1], "a reply to one opportunity's message");
+    assert.deepEqual(await pick("r-legacy"), ["legacy", null], "an older single reply");
+    assert.deepEqual(await pick("old"), ["old", null], "a reply to the student's own share");
+    assert.equal(await pick("nope"), null);
+    assert.equal(await db.shareToUndo("s2", "r-new-0"), null, "never another student's share");
   });
 });

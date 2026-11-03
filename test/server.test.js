@@ -67,7 +67,7 @@ test.describe("server", { skip: SKIP_DB }, () => {
     await pool?.end();
   });
 
-  test("boot re-queues only unfinished shares from the last 24h", async () => {
+  test("boot re-queues only unfinished shares from the last 30 minutes", async () => {
     await waitForLog("requeued 1 in-progress share(s)");
     await waitForLog("share mid=left-behind picked up");
     assert.ok(!output.includes("mid=finished picked up"));
@@ -127,7 +127,7 @@ test.describe("server", { skip: SKIP_DB }, () => {
 
     const undo = JSON.stringify({ entry: [{ messaging: [{ sender: { id: "9" }, message: { mid: "x3", text: "undo" } }] }] });
     assert.equal((await post(undo)).status, 200);
-    await waitForLog("text mid=x3 sender=9 undo found nothing");
+    await waitForLog("text mid=x3 sender=9 undo without a reply -> nothing");
     assert.equal((await post(undo)).status, 200);
     await waitForLog("text mid=x3 duplicate delivery ignored");
 

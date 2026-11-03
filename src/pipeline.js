@@ -54,15 +54,20 @@ async function send(mid, recipientId, text) {
   }
 }
 
+// Sends one message per opportunity, in order, and records each message id. If Meta refuses
+// one partway, the ones already sent are kept on the row and the share fails.
 async function replyStage(share) {
-  let replyMid;
-  try {
-    replyMid = await send(share.mid, share.sender_id, replies.shareReply(share));
-  } catch (err) {
-    await db.setStatus(share.mid, "failed", [share.failure_reason, err.reason || "reply_failed"].filter(Boolean).join(","));
-    return db.getShare(share.mid);
+  const sent = [];
+  for (const message of replies.shareReplies(share)) {
+    try {
+      sent.push({ index: message.index, reply_mid: await send(share.mid, share.sender_id, message.text) });
+    } catch (err) {
+      await db.setStatus(share.mid, "failed", [share.failure_reason, err.reason || "reply_failed"].filter(Boolean).join(","), { replies: sent });
+      return db.getShare(share.mid);
+    }
   }
-  await db.setStatus(share.mid, "replied", share.failure_reason, { reply_mid: replyMid });
+  log(share.mid, `replied with ${sent.length} message(s)`);
+  await db.setStatus(share.mid, "replied", share.failure_reason, { replies: sent });
   return db.getShare(share.mid);
 }
 
@@ -84,23 +89,25 @@ async function handleText(event) {
     await send(mid, senderId, replies.HELP).catch(() => {});
     return;
   }
-  const share = await db.shareToUndo(senderId, event.replyToMid);
-  console.log(`text mid=${mid} sender=${senderId} undo ${event.replyToMid ? "as a reply" : "without a reply"} -> share ${share ? share.mid : "none"}`);
-  if (!share || share.status === "undone") {
-    console.log(`text mid=${mid} sender=${senderId} undo found ${share ? "an already undone share" : "nothing"}`);
-    await send(mid, senderId, replies.undoReply(share, [])).catch(() => {});
+  const target = await db.shareToUndo(senderId, event.replyToMid);
+  console.log(`text mid=${mid} sender=${senderId} undo ${event.replyToMid ? "as a reply" : "without a reply"} -> ${target ? `share ${target.share.mid} item ${target.index ?? "all"}` : "nothing"}`);
+  if (!target) {
+    await send(mid, senderId, replies.undoReply(null, [])).catch(() => {});
     return;
   }
+  const { share, index } = target;
   const events = share.event_ids || [];
+  const removed = index === null ? events : events.filter((e) => e.index === index);
   try {
-    await deleteEvents(events.map((e) => e.id));
+    await deleteEvents(removed.map((e) => e.id));
   } catch (err) {
     log(share.mid, `undo failed: ${err.message}`);
-    await send(mid, senderId, "Sorry, I couldn't remove those events just now. Try undo again in a few minutes.").catch(() => {});
+    await send(mid, senderId, "Sorry, I couldn't remove that just now. Try undo again in a few minutes.").catch(() => {});
     return;
   }
-  await db.setStatus(share.mid, "undone", share.failure_reason);
-  await send(mid, senderId, events.length ? replies.undoReply(share, events) : replies.undoReply(null, [])).catch(() => {});
+  const remaining = events.filter((e) => !removed.includes(e));
+  await db.setStatus(share.mid, remaining.length ? "replied" : "undone", share.failure_reason, { event_ids: remaining });
+  await send(mid, senderId, replies.undoReply(share, removed)).catch(() => {});
 }
 
 async function fetchStage(share) {
